@@ -1,0 +1,13 @@
+# Dépendances optionnelles pour la fonctionnalité Entretiens
+# Installation: pip install -r requirements_entretiens.txt
+
+# Enregistrement audio
+pyaudio==0.2.13
+
+# Transcription audio avec Whisper (OpenAI)
+openai-whisper==20231117
+
+# Note: ffmpeg doit être installé sur le système pour whisper
+# Ubuntu/Debian: sudo apt-get install ffmpeg
+# macOS: brew install ffmpeg
+# Windows: Télécharger depuis https://ffmpeg.org/download.html
