@@ -20,8 +20,9 @@ ApplicationWindow {
     property var openTabs: []
     property int activeTabIndex: -1
     
-    // Navigation
+    // Navigation (supprimé - maintenant dans chaque onglet)
     property string currentAddress: ""
+    
     property var favoritePages: [
         {name: "Menu Principal", icon: "🏠", type: "menu", isFolder: false},
         {name: "Avocats", icon: "⚖️", type: "avocat", isFolder: false},
@@ -1129,6 +1130,9 @@ ApplicationWindow {
                             // Charger les favoris
                             loadFavoritesFromVault()
                             
+                            // Charger l'historique
+                            loadHistoryFromVault()
+                            
                             openMenuTab()
                         }
                     }
@@ -1420,15 +1424,31 @@ ApplicationWindow {
                             Rectangle {
                                 width: 32; height: 32; radius: 16
                                 color: backMouse.containsMouse ? "#5F6368" : "transparent"
+                                opacity: window.canGoBack() ? 1.0 : 0.3
                                 Text { text: "◀"; color: "#9AA0A6"; font.pixelSize: 14; anchors.centerIn: parent }
-                                MouseArea { id: backMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
+                                MouseArea { 
+                                    id: backMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    enabled: window.canGoBack()
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor
+                                    onClicked: window.goBack()
+                                }
                             }
                             
                             Rectangle {
                                 width: 32; height: 32; radius: 16
                                 color: fwdMouse.containsMouse ? "#5F6368" : "transparent"
+                                opacity: window.canGoForward() ? 1.0 : 0.3
                                 Text { text: "▶"; color: "#9AA0A6"; font.pixelSize: 14; anchors.centerIn: parent }
-                                MouseArea { id: fwdMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
+                                MouseArea { 
+                                    id: fwdMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    enabled: window.canGoForward()
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor
+                                    onClicked: window.goForward()
+                                }
                             }
                             
                             Rectangle {
@@ -1709,13 +1729,13 @@ ApplicationWindow {
                                 property var favsRef: favoritePages
                                 
                                 // Drag & Drop
-                                Drag.active: favDragHandler.drag.active
+                                Drag.active: favMouse.drag.active
                                 Drag.source: favItem
                                 Drag.hotSpot.x: width / 2
                                 Drag.hotSpot.y: height / 2
                                 
                                 states: State {
-                                    when: favDragHandler.drag.active
+                                    when: favMouse.drag.active
                                     ParentChange { target: favItem; parent: window.contentItem }
                                     AnchorChanges { 
                                         target: favItem
@@ -1728,17 +1748,29 @@ ApplicationWindow {
                                     id: dropArea
                                     anchors.fill: parent
                                     
+                                    onEntered: function(drag) {
+                                        console.log("DropArea entered - Target:", modelData.name, "isFolder:", modelData.isFolder)
+                                    }
+                                    
                                     onDropped: function(drop) {
+                                        console.log("DROP! Source:", drop.source ? drop.source.visualIndex : "null", "Target:", favItem.visualIndex)
+                                        
                                         if (drop.source !== favItem) {
                                             var sourceIndex = drop.source.visualIndex
                                             var targetIndex = favItem.visualIndex
+                                            
+                                            console.log("  sourceIndex:", sourceIndex, "targetIndex:", targetIndex)
                                             
                                             if (sourceIndex !== targetIndex) {
                                                 var newFavs = favItem.favsRef.slice()
                                                 var draggedItem = newFavs[sourceIndex]
                                                 
-                                                // Si la cible est un dossier et l'élément n'est pas un dossier
-                                                if (modelData.isFolder && !draggedItem.isFolder) {
+                                                console.log("  Dragged:", draggedItem.name, "isFolder:", draggedItem.isFolder)
+                                                console.log("  Target:", modelData.name, "isFolder:", modelData.isFolder)
+                                                
+                                                // Si la cible est un dossier (on peut mettre n'importe quoi dedans)
+                                                if (modelData.isFolder) {
+                                                    console.log("  → Ajout dans dossier")
                                                     // Ajouter dans le dossier
                                                     if (!newFavs[targetIndex].children) {
                                                         newFavs[targetIndex].children = []
@@ -1746,6 +1778,7 @@ ApplicationWindow {
                                                     newFavs[targetIndex].children.push(draggedItem)
                                                     newFavs.splice(sourceIndex, 1)
                                                 } else if (!modelData.isFolder) {
+                                                    console.log("  → Réorganisation")
                                                     // Réorganiser normalement (uniquement si cible n'est PAS un dossier)
                                                     var item = newFavs.splice(sourceIndex, 1)[0]
                                                     newFavs.splice(targetIndex, 0, item)
@@ -1785,7 +1818,84 @@ ApplicationWindow {
                                     }
                                 }
                                 
-                                // Drag handler
+                                // MouseArea unifié (drag + click + hover)
+                                MouseArea {
+                                    id: favMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: drag.active ? Qt.ClosedHandCursor : Qt.PointingHandCursor
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                    preventStealing: true
+                                    
+                                    drag.target: isDragging ? favItem : null
+                                    drag.threshold: 15
+                                    
+                                    property bool isDragging: false
+                                    property point pressPos: Qt.point(0, 0)
+                                    
+                                    onPressed: function(mouse) {
+                                        isDragging = false
+                                        pressPos = Qt.point(mouse.x, mouse.y)
+                                    }
+                                    
+                                    onPositionChanged: function(mouse) {
+                                        if (pressed && !isDragging) {
+                                            var dx = Math.abs(mouse.x - pressPos.x)
+                                            var dy = Math.abs(mouse.y - pressPos.y)
+                                            if (dx > 15 || dy > 15) {
+                                                isDragging = true
+                                                drag.target = favItem
+                                            }
+                                        }
+                                    }
+                                    
+                                    onReleased: function(mouse) {
+                                        if (isDragging) {
+                                            // Laisser le système gérer le drop
+                                            favItem.Drag.drop()
+                                            // Réinitialiser position
+                                            Qt.callLater(function() {
+                                                favItem.x = 0
+                                                favItem.y = 0
+                                            })
+                                        }
+                                        isDragging = false
+                                        drag.target = null
+                                    }
+                                    
+                                    onDoubleClicked: function(mouse) {
+                                        if (mouse.button === Qt.LeftButton && !isDragging) {
+                                            // Double-clic = Renommer
+                                            renameFavoritePopup.editingIndex = index
+                                            renameField.text = modelData.name
+                                            renameFavoritePopup.open()
+                                        }
+                                    }
+                                    
+                                    onClicked: function(mouse) {
+                                        if (isDragging) return
+                                        
+                                        console.log("Favori cliqué:", modelData.name, "isFolder:", modelData.isFolder)
+                                        
+                                        if (mouse.button === Qt.RightButton) {
+                                            favContextMenu.selectedIndex = index
+                                            favContextMenu.popup()
+                                        } else {
+                                            if (modelData.isFolder) {
+                                                console.log("Ouverture menu dossier, children:", modelData.children ? modelData.children.length : 0)
+                                                folderMenu.currentFolder = modelData
+                                                folderMenu.popup()
+                                            } else if (modelData.type === "menu") {
+                                                navigateToMenu()
+                                            } else {
+                                                navigateToInterface(modelData.type, modelData.name)
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                // Drag handler (maintenant intégré dans favMouse)
+                                /*
                                 MouseArea {
                                     id: favDragHandler
                                     anchors.fill: parent
@@ -1801,19 +1911,24 @@ ApplicationWindow {
                                         favItem.y = 0
                                     }
                                 }
+                                */
                                 
-                                // Click handler (superposé)
+                                // Click handler unifié (ci-dessus)
+                                /*
                                 MouseArea {
                                     id: favMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                    propagateComposedEvents: true
                                     
-                                    onPressed: function(mouse) {
-                                        // Propager pour permettre le drag
-                                        mouse.accepted = false
+                                    onDoubleClicked: function(mouse) {
+                                        if (mouse.button === Qt.LeftButton && !favDragHandler.drag.active) {
+                                            // Double-clic = Renommer
+                                            renameFavoritePopup.editingIndex = index
+                                            renameField.text = modelData.name
+                                            renameFavoritePopup.open()
+                                        }
                                     }
                                     
                                     onClicked: function(mouse) {
@@ -1825,6 +1940,7 @@ ApplicationWindow {
                                         } else if (!favDragHandler.drag.active) {
                                             if (modelData.isFolder) {
                                                 console.log("Ouverture menu dossier, children:", modelData.children ? modelData.children.length : 0)
+                                                folderMenu.currentFolder = modelData
                                                 folderMenu.popup()
                                             } else if (modelData.type === "menu") {
                                                 navigateToMenu()
@@ -1834,9 +1950,12 @@ ApplicationWindow {
                                         }
                                     }
                                 }
+                                */
                                 
                                 Menu {
                                     id: folderMenu
+                                    
+                                    property var currentFolder: null
                                     
                                     background: Rectangle {
                                         implicitWidth: 180
@@ -1846,13 +1965,16 @@ ApplicationWindow {
                                     }
                                     
                                     Repeater {
-                                        model: modelData.isFolder && modelData.children ? modelData.children : []
+                                        model: folderMenu.currentFolder && folderMenu.currentFolder.children ? folderMenu.currentFolder.children : []
                                         
-                                        delegate: MenuItem {
+                                        MenuItem {
                                             required property var modelData
+                                            required property int index
                                             
-                                            text: modelData.icon + " " + modelData.name
+                                            id: menuItem
+                                            text: modelData.icon + " " + modelData.name + (modelData.isFolder ? " ▶" : "")
                                             height: 32
+                                            
                                             background: Rectangle {
                                                 color: parent.hovered ? "#3C4043" : "transparent"
                                             }
@@ -1862,7 +1984,94 @@ ApplicationWindow {
                                                 font.pixelSize: 12
                                                 leftPadding: 8
                                             }
-                                            onClicked: navigateToInterface(modelData.type, modelData.name)
+                                            
+                                            // Timer pour délai hover
+                                            Timer {
+                                                id: hoverTimer
+                                                interval: 300
+                                                onTriggered: {
+                                                    if (modelData.isFolder && menuItem.hovered) {
+                                                        subMenu.x = menuItem.width
+                                                        subMenu.y = 0
+                                                        subMenu.open()
+                                                    }
+                                                }
+                                            }
+                                            
+                                            onHoveredChanged: {
+                                                if (modelData.isFolder) {
+                                                    if (hovered) {
+                                                        hoverTimer.start()
+                                                    } else {
+                                                        hoverTimer.stop()
+                                                    }
+                                                }
+                                            }
+                                            
+                                            onClicked: {
+                                                if (!modelData.isFolder) {
+                                                    navigateToInterface(modelData.type, modelData.name)
+                                                    folderMenu.close()
+                                                }
+                                            }
+                                            
+                                            // Sous-menu pour les dossiers
+                                            Menu {
+                                                id: subMenu
+                                                
+                                                parent: menuItem
+                                                
+                                                background: Rectangle {
+                                                    implicitWidth: 180
+                                                    color: "#292A2D"
+                                                    border.color: "#3C4043"
+                                                    radius: 6
+                                                }
+                                                
+                                                Repeater {
+                                                    model: modelData.isFolder && modelData.children ? modelData.children : []
+                                                    
+                                                    MenuItem {
+                                                        required property var modelData
+                                                        
+                                                        text: modelData.icon + " " + modelData.name
+                                                        height: 32
+                                                        background: Rectangle {
+                                                            color: parent.hovered ? "#3C4043" : "transparent"
+                                                        }
+                                                        contentItem: Text {
+                                                            text: parent.text
+                                                            color: "#E8EAED"
+                                                            font.pixelSize: 12
+                                                            leftPadding: 8
+                                                        }
+                                                        onClicked: {
+                                                            if (modelData.isFolder) {
+                                                                console.log("Sous-sous-dossier:", modelData.name, "- TODO récursion")
+                                                            } else {
+                                                                navigateToInterface(modelData.type, modelData.name)
+                                                                folderMenu.close()
+                                                                subMenu.close()
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                
+                                                MenuItem {
+                                                    text: "📂 Dossier vide"
+                                                    height: 32
+                                                    visible: !modelData.children || modelData.children.length === 0
+                                                    enabled: false
+                                                    background: Rectangle { color: "transparent" }
+                                                    contentItem: Text {
+                                                        text: parent.text
+                                                        color: "#666666"
+                                                        font.pixelSize: 12
+                                                        font.italic: true
+                                                        leftPadding: 8
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                     
@@ -1870,7 +2079,7 @@ ApplicationWindow {
                                     MenuItem {
                                         text: "📂 Dossier vide"
                                         height: 32
-                                        visible: !modelData.children || modelData.children.length === 0
+                                        visible: !folderMenu.currentFolder || !folderMenu.currentFolder.children || folderMenu.currentFolder.children.length === 0
                                         enabled: false
                                         background: Rectangle {
                                             color: "transparent"
@@ -2111,8 +2320,7 @@ ApplicationWindow {
                                     leftPadding: 10
                                 }
                                 onClicked: {
-                                    console.log("Effacer historique")
-                                    // TODO: Implémenter clear history
+                                    window.clearHistory()
                                 }
                             }
                             
@@ -2127,10 +2335,62 @@ ApplicationWindow {
                                 }
                             }
                             
+                            // Historique de l'onglet actif
+                            Repeater {
+                                model: {
+                                    var history = window.getCurrentTabHistory()
+                                    var startIndex = Math.max(0, history.length - 10)
+                                    var result = []
+                                    for (var i = history.length - 1; i >= startIndex; i--) {
+                                        result.push({
+                                            entry: history[i],
+                                            index: i,
+                                            isCurrent: (window.activeTabIndex >= 0 && 
+                                                       window.openTabs[window.activeTabIndex] && 
+                                                       i === window.openTabs[window.activeTabIndex].historyIndex)
+                                        })
+                                    }
+                                    return result
+                                }
+                                
+                                MenuItem {
+                                    required property var modelData
+                                    
+                                    text: modelData.entry.icon + " " + modelData.entry.name
+                                    height: 32
+                                    background: Rectangle {
+                                        color: parent.hovered ? "#3C4043" : "transparent"
+                                        
+                                        Rectangle {
+                                            width: 3
+                                            height: parent.height
+                                            color: "#8AB4F8"
+                                            visible: modelData.isCurrent
+                                        }
+                                    }
+                                    contentItem: Text {
+                                        text: parent.text
+                                        color: modelData.isCurrent ? "#8AB4F8" : "#E8EAED"
+                                        font.pixelSize: 12
+                                        leftPadding: 10
+                                    }
+                                    onClicked: {
+                                        if (window.activeTabIndex >= 0) {
+                                            var newTabs = window.openTabs.slice()
+                                            newTabs[window.activeTabIndex].historyIndex = modelData.index
+                                            window.openTabs = newTabs
+                                            navigateToInterface(modelData.entry.type, modelData.entry.name, false)
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Message si vide
                             MenuItem {
                                 text: "📄 Historique vide"
                                 height: 32
                                 enabled: false
+                                visible: window.getCurrentTabHistory().length === 0
                                 background: Rectangle { color: "transparent" }
                                 contentItem: Text {
                                     text: parent.text
@@ -2139,7 +2399,6 @@ ApplicationWindow {
                                     font.italic: true
                                     leftPadding: 10
                                 }
-                                // TODO: Remplacer par Repeater avec historique réel
                             }
                         }
                     }
@@ -2254,7 +2513,9 @@ ApplicationWindow {
         }
     }
     
-    function navigateToInterface(interfaceType, interfaceName) {
+    function navigateToInterface(interfaceType, interfaceName, addToHistory) {
+        if (addToHistory === undefined) addToHistory = true
+        
         // Naviguer vers interface dans l'onglet actif
         var sourceFile = interfaceType === "avocat" ? "AvocatInterface.qml" : 
                         interfaceType === "syndic" ? "SyndicInterface.qml" :
@@ -2284,27 +2545,59 @@ ApplicationWindow {
         }
         
         if (window.openTabs.length > 0 && window.activeTabIndex >= 0) {
-            // Remplacer onglet actif
+            // Remplacer onglet actif en préservant l'historique
             var newTabs = window.openTabs.slice()
+            var currentTab = newTabs[window.activeTabIndex]
+            
             newTabs[window.activeTabIndex] = {
                 name: interfaceName,
                 icon: icon,
                 type: interfaceType,
-                source: sourceFile
+                source: sourceFile,
+                history: currentTab.history || [],
+                historyIndex: currentTab.historyIndex || -1
             }
             window.openTabs = newTabs
             updateCurrentAddress()
             window.tabsChanged()
+            
+            // Ajouter à l'historique
+            if (addToHistory) {
+                window.addToHistory(interfaceType, interfaceName, icon, "neosiris://" + interfaceType)
+            }
         } else {
             // Pas d'onglet, en créer un
             openInterfaceTab(interfaceType, interfaceName)
         }
     }
     
+    function navigateToSubPage(moduleName, pageName, pageIcon) {
+        // Navigation vers une sous-page d'un module (ex: Stockage Cloud > Mes Comptes)
+        // Cela ajoute une entrée dans l'historique de l'onglet actif
+        
+        if (window.activeTabIndex < 0 || window.activeTabIndex >= window.openTabs.length) return
+        
+        var currentTab = window.openTabs[window.activeTabIndex]
+        var address = "neosiris://" + currentTab.type + "/" + pageName.toLowerCase().replace(/ /g, "_")
+        
+        // Ajouter à l'historique de l'onglet
+        window.addToHistory(currentTab.type + "_" + pageName, moduleName + " > " + pageName, pageIcon || currentTab.icon, address)
+        
+        // Mettre à jour l'adresse
+        window.currentAddress = address
+    }
+    
     function openMenuTab() {
         var isFirstTab = window.openTabs.length === 0
         var newTabs = window.openTabs.slice()
-        newTabs.push({ name: "Menu Principal", icon: "🏠", type: "menu", source: "" })
+        newTabs.push({ 
+            name: "Menu Principal", 
+            icon: "🏠", 
+            type: "menu", 
+            source: "",
+            history: [],
+            historyIndex: -1
+        })
         window.openTabs = newTabs
         window.activeTabIndex = window.openTabs.length - 1
         updateCurrentAddress()
@@ -2354,7 +2647,14 @@ ApplicationWindow {
         }
         
         var newTabs = window.openTabs.slice()
-        newTabs.push({ name: interfaceName, icon: icon, type: interfaceType, source: sourceFile })
+        newTabs.push({ 
+            name: interfaceName, 
+            icon: icon, 
+            type: interfaceType, 
+            source: sourceFile,
+            history: [],
+            historyIndex: -1
+        })
         window.openTabs = newTabs
         window.activeTabIndex = window.openTabs.length - 1
         updateCurrentAddress()
@@ -2438,5 +2738,123 @@ ApplicationWindow {
         
         window.favoritePages = newFavs
         window.saveFavoritesToVault()
+    }
+    
+    // ==================== HISTORIQUE ====================
+    
+    function addToHistory(type, name, icon, address) {
+        if (window.activeTabIndex < 0 || window.activeTabIndex >= window.openTabs.length) return
+        
+        var currentTab = window.openTabs[window.activeTabIndex]
+        
+        // Couper tout ce qui est après historyIndex
+        var newHistory = currentTab.history ? currentTab.history.slice(0, currentTab.historyIndex + 1) : []
+        
+        var entry = {
+            type: type,
+            name: name,
+            icon: icon,
+            address: address,
+            timestamp: new Date().toISOString()
+        }
+        
+        newHistory.push(entry)
+        
+        // Limiter à 50 entrées par onglet
+        if (newHistory.length > 50) {
+            newHistory = newHistory.slice(-50)
+        }
+        
+        // Mettre à jour l'onglet
+        var newTabs = window.openTabs.slice()
+        newTabs[window.activeTabIndex].history = newHistory
+        newTabs[window.activeTabIndex].historyIndex = newHistory.length - 1
+        window.openTabs = newTabs
+        
+        // Sauvegarder (on sauvegarde tout l'historique de tous les onglets)
+        saveAllHistory()
+    }
+    
+    function saveAllHistory() {
+        try {
+            var allHistory = []
+            for (var i = 0; i < window.openTabs.length; i++) {
+                if (window.openTabs[i].history && window.openTabs[i].history.length > 0) {
+                    allHistory = allHistory.concat(window.openTabs[i].history)
+                }
+            }
+            // Garder les 100 dernières entrées globales
+            if (allHistory.length > 100) {
+                allHistory = allHistory.slice(-100)
+            }
+            app.saveNavigationHistory(JSON.stringify(allHistory))
+        } catch(e) {
+            console.log("Erreur sauvegarde historique:", e)
+        }
+    }
+    
+    function loadHistoryFromVault() {
+        // Charge l'historique global (sera réparti dans les onglets au fur et à mesure)
+        try {
+            var historyJson = app.loadNavigationHistory()
+            if (historyJson && historyJson !== "[]") {
+                var globalHistory = JSON.parse(historyJson)
+                console.log("Historique global chargé:", globalHistory.length, "entrées")
+                // On pourrait restaurer les onglets depuis l'historique ici
+            }
+        } catch(e) {
+            console.log("Erreur chargement historique:", e)
+        }
+    }
+    
+    function clearHistory() {
+        // Effacer l'historique de l'onglet actif
+        if (window.activeTabIndex >= 0 && window.activeTabIndex < window.openTabs.length) {
+            var newTabs = window.openTabs.slice()
+            newTabs[window.activeTabIndex].history = []
+            newTabs[window.activeTabIndex].historyIndex = -1
+            window.openTabs = newTabs
+        }
+        app.clearNavigationHistory()
+    }
+    
+    function canGoBack() {
+        if (window.activeTabIndex < 0 || window.activeTabIndex >= window.openTabs.length) return false
+        var currentTab = window.openTabs[window.activeTabIndex]
+        return currentTab.historyIndex && currentTab.historyIndex > 0
+    }
+    
+    function canGoForward() {
+        if (window.activeTabIndex < 0 || window.activeTabIndex >= window.openTabs.length) return false
+        var currentTab = window.openTabs[window.activeTabIndex]
+        return currentTab.history && currentTab.historyIndex < currentTab.history.length - 1
+    }
+    
+    function goBack() {
+        if (!canGoBack()) return
+        
+        var newTabs = window.openTabs.slice()
+        newTabs[window.activeTabIndex].historyIndex--
+        window.openTabs = newTabs
+        
+        var entry = newTabs[window.activeTabIndex].history[newTabs[window.activeTabIndex].historyIndex]
+        navigateToInterface(entry.type, entry.name, false)
+    }
+    
+    function goForward() {
+        if (!canGoForward()) return
+        
+        var newTabs = window.openTabs.slice()
+        newTabs[window.activeTabIndex].historyIndex++
+        window.openTabs = newTabs
+        
+        var entry = newTabs[window.activeTabIndex].history[newTabs[window.activeTabIndex].historyIndex]
+        navigateToInterface(entry.type, entry.name, false)
+    }
+    
+    function getCurrentTabHistory() {
+        if (window.activeTabIndex < 0 || window.activeTabIndex >= window.openTabs.length) return []
+        var currentTab = window.openTabs[window.activeTabIndex]
+        return currentTab.history || []
     }
 }

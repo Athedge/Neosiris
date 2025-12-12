@@ -1051,6 +1051,52 @@ class NeosirisApp(QObject):
             print(f"[ERROR] Erreur sélection image: {e}")
             return ""
 
+    @pyqtSlot(str)
+    def saveNavigationHistory(self, historyJson: str):
+        """Sauvegarde l'historique de navigation dans le vault"""
+        try:
+            if not self.current_user:
+                return
+            
+            history = json.loads(historyJson)
+            history_data = {
+                "history": history[-100:],  # Garder les 100 derniers
+                "last_updated": datetime.now().isoformat()
+            }
+            self._save_json("navigation_history", history_data)
+            
+        except Exception as e:
+            print(f"[ERROR] Erreur sauvegarde historique: {e}")
+    
+    @pyqtSlot(result=str)
+    def loadNavigationHistory(self):
+        """Charge l'historique de navigation depuis le vault"""
+        try:
+            if not self.current_user:
+                return "[]"
+            
+            history_data = self._load_json("navigation_history")
+            if history_data and "history" in history_data:
+                return json.dumps(history_data["history"])
+            return "[]"
+            
+        except Exception as e:
+            print(f"[ERROR] Erreur chargement historique: {e}")
+            return "[]"
+    
+    @pyqtSlot()
+    def clearNavigationHistory(self):
+        """Efface l'historique de navigation"""
+        try:
+            if not self.current_user:
+                return
+            
+            self._save_json("navigation_history", {"history": [], "last_updated": datetime.now().isoformat()})
+            print("[INFO] Historique de navigation effacé")
+            
+        except Exception as e:
+            print(f"[ERROR] Erreur effacement historique: {e}")
+
 def main():
     print("[INFO] Démarrage NEOSIRIS...")
     app = QApplication(sys.argv)
