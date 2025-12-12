@@ -12,6 +12,7 @@ import time
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtQml import QQmlApplicationEngine
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QUrl, QTimer
+from PyQt6.QtGui import QIcon
 
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives import hashes
@@ -792,10 +793,269 @@ class NeosirisApp(QObject):
                 return response
         return f"Assistant IA en mode simulation. Question: '{question}'"
 
+    @pyqtSlot(str, str)
+    def saveProfileImage(self, username: str, imagePath: str):
+        """Sauvegarde l'image de profil dans le vault"""
+        try:
+            if not self.current_user:
+                return
+            
+            import base64
+            
+            # Nettoyer le chemin (supprimer file:///)
+            clean_path = imagePath.replace("file:///", "").replace("file://", "")
+            
+            # Lire l'image et convertir en base64
+            with open(clean_path, 'rb') as f:
+                image_data = f.read()
+                image_base64 = base64.b64encode(image_data).decode('utf-8')
+                
+                # Déterminer le type MIME
+                ext = clean_path.lower().split('.')[-1]
+                mime_types = {
+                    'png': 'image/png',
+                    'jpg': 'image/jpeg',
+                    'jpeg': 'image/jpeg',
+                    'gif': 'image/gif',
+                    'bmp': 'image/bmp'
+                }
+                mime_type = mime_types.get(ext, 'image/png')
+                
+                # Format data URI
+                data_uri = f"data:{mime_type};base64,{image_base64}"
+            
+            # Sauvegarder dans vault
+            profile_images = self._load_json("profile_images")
+            if not profile_images:
+                profile_images = {}
+            
+            profile_images[username] = data_uri
+            self._save_json("profile_images", profile_images)
+            
+            print(f"[INFO] Image de profil sauvegardée pour {username}")
+            
+        except Exception as e:
+            print(f"[ERROR] Erreur sauvegarde image profil: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    @pyqtSlot(str, result=str)
+    def loadProfileImage(self, username: str):
+        """Charge l'image de profil depuis le vault"""
+        try:
+            profile_images = self._load_json("profile_images")
+            if profile_images and username in profile_images:
+                return profile_images[username]
+            return ""
+        except Exception as e:
+            print(f"[ERROR] Erreur chargement image profil: {e}")
+            return ""
+    
+    @pyqtSlot(result=str)
+    def loadCloudAccounts(self):
+        """Charge les comptes cloud depuis le vault"""
+        try:
+            if not self.current_user:
+                return "[]"
+            
+            cloud_data = self._load_json("cloud_accounts")
+            if cloud_data and "accounts" in cloud_data:
+                return json.dumps(cloud_data["accounts"])
+            return "[]"
+        except Exception as e:
+            print(f"[ERROR] Erreur chargement comptes cloud: {e}")
+            return "[]"
+    
+    @pyqtSlot(str)
+    def saveCloudAccounts(self, accountsJson: str):
+        """Sauvegarde les comptes cloud dans le vault"""
+        try:
+            if not self.current_user:
+                return
+            
+            accounts = json.loads(accountsJson)
+            cloud_data = {"accounts": accounts, "last_sync": datetime.now().isoformat()}
+            self._save_json("cloud_accounts", cloud_data)
+            
+            self.logActivity("☁️", "Comptes cloud mis à jour", f"{len(accounts)} compte(s)")
+        except Exception as e:
+            print(f"[ERROR] Erreur sauvegarde comptes cloud: {e}")
+    
+    @pyqtSlot(str, str, result=str)
+    def connectCloudProvider(self, provider: str, credentials: str):
+        """Connecte un provider cloud"""
+        try:
+            creds = json.loads(credentials)
+            
+            account_info = {
+                "id": f"acc_{provider}_{int(time.time())}",
+                "provider": provider,
+                "name": provider.capitalize(),
+                "email": creds.get("email", "user@example.com"),
+                "connected": True,
+                "usedSpace": 5368709120,
+                "totalSpace": 16106127360,
+                "credentials": credentials
+            }
+            
+            self.logActivity("☁️", f"Compte {provider} connecté", account_info["email"])
+            return json.dumps(account_info)
+            
+        except Exception as e:
+            print(f"[ERROR] Erreur connexion cloud: {e}")
+            return json.dumps({"error": str(e)})
+    
+    @pyqtSlot(str, str, result=str)
+    def listCloudFiles(self, accountId: str, path: str):
+        """Liste les fichiers d'un compte cloud"""
+        try:
+            files = [
+                {"name": "Documents", "isFolder": True, "size": 0, "modified": datetime.now().strftime("%d/%m/%Y"), "localCopy": False, "path": path + "Documents/"},
+                {"name": "Photos", "isFolder": True, "size": 0, "modified": "10/12/2025", "localCopy": True, "path": path + "Photos/"},
+                {"name": "Contrat_2025.pdf", "isFolder": False, "size": 2048576, "modified": "08/12/2025", "localCopy": False, "path": path + "Contrat_2025.pdf"}
+            ]
+            return json.dumps(files)
+        except Exception as e:
+            print(f"[ERROR] Erreur liste fichiers cloud: {e}")
+            return "[]"
+    
+    @pyqtSlot(str, str, str)
+    def downloadFileToVault(self, accountId: str, filepath: str, filename: str):
+        """Télécharge un fichier cloud vers le vault"""
+        try:
+            if not self.current_user:
+                print("[ERROR] Pas d'utilisateur connecté")
+                return
+            
+            print(f"[INFO] Téléchargement: {filename} depuis {accountId}")
+            
+            cloud_local_dir = self.vault_dir / "vault" / self.current_user / "cloud_files"
+            cloud_local_dir.mkdir(parents=True, exist_ok=True)
+            
+            cloud_files = self._load_json("cloud_files_local")
+            if not cloud_files:
+                cloud_files = {"files": {}}
+            
+            file_key = f"{accountId}:{filepath}"
+            cloud_files["files"][file_key] = {
+                "filename": filename,
+                "accountId": accountId,
+                "filepath": filepath,
+                "downloaded": datetime.now().isoformat(),
+                "size": 0
+            }
+            
+            self._save_json("cloud_files_local", cloud_files)
+            self.logActivity("⬇️", "Fichier téléchargé", f"{filename}")
+            self.dataChanged.emit()
+            
+        except Exception as e:
+            print(f"[ERROR] Erreur téléchargement: {e}")
+    
+    @pyqtSlot(str, str)
+    def deleteLocalCopy(self, accountId: str, filepath: str):
+        """Supprime la copie locale d'un fichier cloud"""
+        try:
+            cloud_files = self._load_json("cloud_files_local")
+            if not cloud_files:
+                return
+            
+            file_key = f"{accountId}:{filepath}"
+            if file_key in cloud_files.get("files", {}):
+                filename = cloud_files["files"][file_key]["filename"]
+                del cloud_files["files"][file_key]
+                self._save_json("cloud_files_local", cloud_files)
+                self.logActivity("🗑️", "Copie locale supprimée", filename)
+                self.dataChanged.emit()
+                
+        except Exception as e:
+            print(f"[ERROR] Erreur suppression locale: {e}")
+    
+    @pyqtSlot(str)
+    def syncAccount(self, accountId: str):
+        """Synchronise un compte cloud"""
+        try:
+            print(f"[INFO] Synchronisation compte: {accountId}")
+            self.logActivity("🔄", "Synchronisation", f"Compte {accountId}")
+            self.dataChanged.emit()
+        except Exception as e:
+            print(f"[ERROR] Erreur sync: {e}")
+    
+    @pyqtSlot(str)
+    def disconnectCloudAccount(self, accountId: str):
+        """Déconnecte un compte cloud"""
+        try:
+            accounts_json = self.loadCloudAccounts()
+            accounts = json.loads(accounts_json)
+            accounts = [acc for acc in accounts if acc.get("id") != accountId]
+            self.saveCloudAccounts(json.dumps(accounts))
+            self.logActivity("🔌", "Compte déconnecté", accountId)
+            self.dataChanged.emit()
+        except Exception as e:
+            print(f"[ERROR] Erreur déconnexion: {e}")
+
+
+    @pyqtSlot(str)
+    def saveFavorites(self, favoritesJson: str):
+        """Sauvegarde les favoris dans le vault"""
+        try:
+            if not self.current_user:
+                return
+            
+            favorites = json.loads(favoritesJson)
+            favorites_data = {
+                "favorites": favorites,
+                "last_updated": datetime.now().isoformat()
+            }
+            self._save_json("user_favorites", favorites_data)
+            print(f"[INFO] Favoris sauvegardés: {len(favorites)} élément(s)")
+            
+        except Exception as e:
+            print(f"[ERROR] Erreur sauvegarde favoris: {e}")
+    
+    @pyqtSlot(result=str)
+    def loadFavorites(self):
+        """Charge les favoris depuis le vault"""
+        try:
+            if not self.current_user:
+                return "[]"
+            
+            favorites_data = self._load_json("user_favorites")
+            if favorites_data and "favorites" in favorites_data:
+                return json.dumps(favorites_data["favorites"])
+            return "[]"
+            
+        except Exception as e:
+            print(f"[ERROR] Erreur chargement favoris: {e}")
+            return "[]"
+
+    @pyqtSlot(result=str)
+    def selectImageFile(self):
+        """Ouvre un dialog pour sélectionner une image"""
+        try:
+            from PyQt6.QtWidgets import QFileDialog
+            
+            file_path, _ = QFileDialog.getOpenFileName(
+                None,
+                "Sélectionner une image",
+                "",
+                "Images (*.png *.jpg *.jpeg *.bmp *.gif)"
+            )
+            
+            if file_path:
+                print(f"[INFO] Image sélectionnée: {file_path}")
+                return file_path
+            return ""
+            
+        except Exception as e:
+            print(f"[ERROR] Erreur sélection image: {e}")
+            return ""
+
 def main():
     print("[INFO] Démarrage NEOSIRIS...")
     app = QApplication(sys.argv)
     app.setApplicationName("NEOSIRIS")
+    app.setWindowIcon(QIcon(str(Path(__file__).parent.parent.parent / "assets" / "Neosiris.ico")))
     engine = QQmlApplicationEngine()
     neosiris = NeosirisApp()
     engine.rootContext().setContextProperty("app", neosiris)

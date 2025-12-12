@@ -11,249 +11,1125 @@ ApplicationWindow {
     color: "#0A0A0A"
     
     property bool vaultOpen: false
-    property string currentPage: "login"
+    property string currentUser: ""
+    property bool isEngineerMode: false
     
-    // Raccourcis clavier globaux
-    Shortcut {
-        sequence: "Ctrl+D"
-        onActivated: {
-            if (window.vaultOpen) {
-                window.currentPage = "dashboard"
-                contentStack.replace(dashboardPage)
-    }}
+    property var appInstance: app
+    
+    // Gestion des onglets
+    property var openTabs: []
+    property int activeTabIndex: -1
+    
+    // Navigation
+    property string currentAddress: ""
+    property var favoritePages: [
+        {name: "Menu Principal", icon: "🏠", type: "menu", isFolder: false},
+        {name: "Avocats", icon: "⚖️", type: "avocat", isFolder: false},
+        {name: "Travail", icon: "📁", type: "folder", isFolder: true, children: [
+            {name: "Syndic", icon: "🏢", type: "syndic"},
+            {name: "Architecte", icon: "🏛️", type: "architecte"}
+        ]}
+    ]
+    
+    signal tabsChanged()
+    signal saveFavoritesRequested()
+    
+    onSaveFavoritesRequested: {
+        saveFavoritesToVault()
     }
     
-    Shortcut {
-        sequence: "Ctrl+P"
-        onActivated: {
-            if (window.vaultOpen) {
-                window.currentPage = "profiles"
-                contentStack.replace(profilesPage)
-    }}
-    }
-    
-    Shortcut {
-        sequence: "Ctrl+C"
-        onActivated: {
-            if (window.vaultOpen) {
-                window.currentPage = "clients"
-                contentStack.replace(clientsPage)
-    }}
-    }
-    
-    Shortcut {
-        sequence: "Ctrl+F"
-        onActivated: {
-            if (window.vaultOpen) {
-                window.currentPage = "dossiers"
-                contentStack.replace(dossiersPage)
-    }}
-    }
-    
-    Shortcut {
-        sequence: "Ctrl+I"
-        onActivated: {
-            if (window.vaultOpen) {
-                window.currentPage = "ia"
-                contentStack.replace(iaPage)
-    }}
-    }
-    
-    Shortcut {
-        sequence: "Ctrl+Q"
-        onActivated: Qt.quit()
-    }
-    
-    Shortcut {
-        sequence: "F1"
-        onActivated: {
-            if (window.vaultOpen) {
-                window.currentPage = "base"
-                contentStack.replace(basePage)
-    }}
-    }
-    
-    StackView {
-        id: pageStack
-        anchors.fill: parent
-        initialItem: vaultOpen ? mainLayout : loginPage
+    // POPUP PROFIL ÉDITABLE
+    Popup {
+        id: userProfilePopup
+        anchors.centerIn: parent
+        width: 700
+        height: 600
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
         
-        pushEnter: Transition {
-            PropertyAnimation { property: "opacity"; from: 0; to: 1; duration: 150 }
+        property string profileImagePath: ""
+        property bool editMode: false
+        
+        background: Rectangle {
+            color: "#1A1A1A"
+            radius: 12
+            border.color: "#333"
+            border.width: 1
         }
-        pushExit: Transition {
-            PropertyAnimation { property: "opacity"; from: 1; to: 0; duration: 150 }
+        
+        Column {
+            anchors.fill: parent
+            anchors.margins: 30
+            spacing: 20
+            
+            Row {
+                width: parent.width
+                
+                Text {
+                    text: "Profil Utilisateur"
+                    font.pixelSize: 24
+                    font.bold: true
+                    color: "#FFFFFF"
+                    width: parent.width - 120
+                }
+                
+                Button {
+                    text: userProfilePopup.editMode ? "Annuler" : "Éditer"
+                    width: 100
+                    height: 35
+                    background: Rectangle {
+                        color: parent.hovered ? "#3A3A3A" : "#2A2A2A"
+                        border.color: "#555"
+                        radius: 6
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#FFFFFF"
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        userProfilePopup.editMode = !userProfilePopup.editMode
+                        if (!userProfilePopup.editMode) {
+                            displayNameField.text = window.currentUser
+                        }
+                    }
+                }
+            }
+            
+            Rectangle { width: parent.width; height: 1; color: "#333" }
+            
+            Row {
+                spacing: 30
+                width: parent.width
+                
+                Column {
+                    spacing: 15
+                    
+                    Rectangle {
+                        id: avatarContainer
+                        width: 150
+                        height: 150
+                        radius: 75
+                        color: "#2A2A2A"
+                        border.color: "#555"
+                        border.width: 3
+                        
+                        Canvas {
+                            id: avatarCanvas
+                            anchors.fill: parent
+                            anchors.margins: 3
+                            visible: userProfilePopup.profileImagePath !== ""
+                            
+                            property var loadedImage: null
+                            
+                            onPaint: {
+                                var ctx = getContext("2d")
+                                ctx.save()
+                                ctx.clearRect(0, 0, width, height)
+                                
+                                // Clip circulaire
+                                ctx.beginPath()
+                                ctx.arc(width/2, height/2, width/2, 0, Math.PI * 2)
+                                ctx.clip()
+                                
+                                if (loadedImage && loadedImage.status === Image.Ready) {
+                                    ctx.drawImage(loadedImage, 0, 0, width, height)
+                                }
+                                
+                                ctx.restore()
+                            }
+                            
+                            Image {
+                                id: profileImage
+                                source: userProfilePopup.profileImagePath
+                                visible: false
+                                onStatusChanged: {
+                                    if (status === Image.Ready) {
+                                        avatarCanvas.loadedImage = profileImage
+                                        avatarCanvas.requestPaint()
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Text {
+                            text: window.currentUser.substring(0, 1).toUpperCase()
+                            font.pixelSize: 60
+                            font.bold: true
+                            color: "#FFFFFF"
+                            anchors.centerIn: parent
+                            visible: userProfilePopup.profileImagePath === ""
+                        }
+                    }
+                    
+                    Button {
+                        text: "Changer photo"
+                        width: 150
+                        height: 35
+                        visible: userProfilePopup.editMode
+                        background: Rectangle {
+                            color: parent.hovered ? "#3A3A3A" : "#2A2A2A"
+                            radius: 6
+                        }
+                        contentItem: Text {
+                            text: parent.text
+                            color: "#FFFFFF"
+                            font.pixelSize: 12
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        onClicked: imageCropPopup.open()
+                    }
+                }
+                
+                Column {
+                    spacing: 20
+                    width: parent.width - 200
+                    
+                    Column {
+                        spacing: 8
+                        width: parent.width
+                        
+                        Text {
+                            text: "Nom d'utilisateur"
+                            font.pixelSize: 12
+                            color: "#999999"
+                        }
+                        
+                        TextField {
+                            width: parent.width
+                            height: 40
+                            text: window.currentUser
+                            color: "#888888"
+                            font.pixelSize: 14
+                            readOnly: true
+                            background: Rectangle {
+                                color: "#0F0F0F"
+                                border.color: "#333"
+                                radius: 6
+                            }
+                        }
+                    }
+                    
+                    Column {
+                        spacing: 8
+                        width: parent.width
+                        
+                        Text {
+                            text: "Nom d'affichage"
+                            font.pixelSize: 12
+                            color: "#999999"
+                        }
+                        
+                        TextField {
+                            id: displayNameField
+                            width: parent.width
+                            height: 40
+                            text: window.currentUser
+                            color: "#FFFFFF"
+                            font.pixelSize: 14
+                            readOnly: !userProfilePopup.editMode
+                            background: Rectangle {
+                                color: userProfilePopup.editMode ? "#1A1A1A" : "#0F0F0F"
+                                border.color: userProfilePopup.editMode ? (displayNameField.activeFocus ? "#FFFFFF" : "#555") : "#333"
+                                border.width: userProfilePopup.editMode ? 2 : 1
+                                radius: 6
+                            }
+                        }
+                    }
+                    
+                    Column {
+                        spacing: 8
+                        width: parent.width
+                        
+                        Text {
+                            text: "Email"
+                            font.pixelSize: 12
+                            color: "#999999"
+                        }
+                        
+                        TextField {
+                            id: emailField
+                            width: parent.width
+                            height: 40
+                            placeholderText: "email@exemple.com"
+                            color: "#FFFFFF"
+                            font.pixelSize: 14
+                            readOnly: !userProfilePopup.editMode
+                            background: Rectangle {
+                                color: userProfilePopup.editMode ? "#1A1A1A" : "#0F0F0F"
+                                border.color: userProfilePopup.editMode ? (emailField.activeFocus ? "#FFFFFF" : "#555") : "#333"
+                                border.width: userProfilePopup.editMode ? 2 : 1
+                                radius: 6
+                            }
+                        }
+                    }
+                    
+                    Row {
+                        spacing: 10
+                        
+                        Rectangle {
+                            width: 12
+                            height: 12
+                            radius: 6
+                            color: window.isEngineerMode ? "#4CAF50" : "#999999"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        
+                        Text {
+                            text: window.isEngineerMode ? "Mode Ingénieur" : "Utilisateur Standard"
+                            font.pixelSize: 13
+                            color: window.isEngineerMode ? "#4CAF50" : "#999999"
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                }
+            }
+            
+            Item { height: 20 }
+            
+            Row {
+                spacing: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+                
+                Button {
+                    text: "Fermer"
+                    width: 120
+                    height: 40
+                    visible: !userProfilePopup.editMode
+                    background: Rectangle {
+                        color: parent.hovered ? "#CCCCCC" : "#FFFFFF"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#000000"
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: userProfilePopup.close()
+                }
+                
+                Button {
+                    text: "Enregistrer"
+                    width: 120
+                    height: 40
+                    visible: userProfilePopup.editMode
+                    background: Rectangle {
+                        color: parent.hovered ? "#00CC00" : "#00AA00"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#FFFFFF"
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        console.log("Sauvegarde profil:", displayNameField.text, emailField.text)
+                        
+                        // Sauvegarder la photo de profil
+                        if (userProfilePopup.profileImagePath) {
+                            app.saveProfileImage(window.currentUser, userProfilePopup.profileImagePath)
+                        }
+                        
+                        userProfilePopup.editMode = false
+                        userProfilePopup.close()
+                    }
+                }
+            }
         }
     }
     
+    
+    // POPUP CROP IMAGE
+    Popup {
+        id: imageCropPopup
+        anchors.centerIn: parent
+        width: 600
+        height: 700
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        
+        property string selectedImagePath: ""
+        property real imageScale: 1.0
+        property real imageX: 0
+        property real imageY: 0
+        
+        background: Rectangle {
+            color: "#1A1A1A"
+            radius: 12
+            border.color: "#333"
+            border.width: 1
+        }
+        
+        onOpened: {
+            imageCropPopup.imageScale = 1.0
+            imageCropPopup.imageX = 0
+            imageCropPopup.imageY = 0
+        }
+        
+        Column {
+            anchors.fill: parent
+            anchors.margins: 30
+            spacing: 20
+            
+            Text {
+                text: "Recadrer la photo de profil"
+                font.pixelSize: 20
+                font.bold: true
+                color: "#FFFFFF"
+            }
+            
+            // Zone de crop RONDE
+            Rectangle {
+                width: 400
+                height: 400
+                anchors.horizontalCenter: parent.horizontalCenter
+                color: "#0A0A0A"
+                border.color: "#555"
+                border.width: 2
+                radius: 8
+                
+                // Cercle de découpe
+                Item {
+                    id: cropArea
+                    anchors.centerIn: parent
+                    width: 300
+                    height: 300
+                    clip: true
+                    
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: 150
+                        color: "transparent"
+                        
+                        Image {
+                            id: cropImage
+                            source: imageCropPopup.selectedImagePath
+                            width: 300
+                            height: 300
+                            fillMode: Image.PreserveAspectFit
+                            
+                            x: imageCropPopup.imageX
+                            y: imageCropPopup.imageY
+                            scale: imageCropPopup.imageScale
+                            transformOrigin: Item.Center
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                property point lastPos
+                                
+                                onPressed: function(mouse) {
+                                    lastPos = Qt.point(mouse.x, mouse.y)
+                                }
+                                
+                                onPositionChanged: function(mouse) {
+                                    if (pressed) {
+                                        var dx = (mouse.x - lastPos.x)
+                                        var dy = (mouse.y - lastPos.y)
+                                        imageCropPopup.imageX += dx
+                                        imageCropPopup.imageY += dy
+                                        lastPos = Qt.point(mouse.x, mouse.y)
+                                    }
+                                }
+                                
+                                onWheel: function(wheel) {
+                                    var delta = wheel.angleDelta.y / 120
+                                    var newScale = imageCropPopup.imageScale + delta * 0.1
+                                    if (newScale >= 0.5 && newScale <= 3.0) {
+                                        imageCropPopup.imageScale = newScale
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Overlay sombre avec trou rond
+                Canvas {
+                    anchors.fill: parent
+                    
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.reset()
+                        
+                        ctx.fillStyle = "rgba(0, 0, 0, 0.7)"
+                        ctx.fillRect(0, 0, width, height)
+                        
+                        ctx.globalCompositeOperation = "destination-out"
+                        ctx.beginPath()
+                        ctx.arc(width/2, height/2, 150, 0, Math.PI * 2)
+                        ctx.fill()
+                    }
+                }
+                
+                // Bordure du cercle
+                Rectangle {
+                    width: 300
+                    height: 300
+                    radius: 150
+                    anchors.centerIn: parent
+                    color: "transparent"
+                    border.color: "#FFFFFF"
+                    border.width: 3
+                }
+            }
+            
+            // Contrôles zoom
+            Column {
+                spacing: 10
+                width: parent.width
+                
+                Row {
+                    spacing: 10
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    
+                    Text {
+                        text: "Zoom:"
+                        color: "#FFFFFF"
+                        font.pixelSize: 13
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    
+                    Slider {
+                        id: zoomSlider
+                        from: 0.5
+                        to: 3.0
+                        value: imageCropPopup.imageScale
+                        width: 200
+                        onValueChanged: imageCropPopup.imageScale = value
+                        
+                        background: Rectangle {
+                            x: zoomSlider.leftPadding
+                            y: zoomSlider.topPadding + zoomSlider.availableHeight / 2 - height / 2
+                            width: zoomSlider.availableWidth
+                            height: 4
+                            radius: 2
+                            color: "#333"
+                            
+                            Rectangle {
+                                width: zoomSlider.visualPosition * parent.width
+                                height: parent.height
+                                color: "#8AB4F8"
+                                radius: 2
+                            }
+                        }
+                        
+                        handle: Rectangle {
+                            x: zoomSlider.leftPadding + zoomSlider.visualPosition * (zoomSlider.availableWidth - width)
+                            y: zoomSlider.topPadding + zoomSlider.availableHeight / 2 - height / 2
+                            width: 16
+                            height: 16
+                            radius: 8
+                            color: zoomSlider.pressed ? "#CCCCCC" : "#FFFFFF"
+                        }
+                    }
+                    
+                    Text {
+                        text: Math.round(imageCropPopup.imageScale * 100) + "%"
+                        color: "#999999"
+                        font.pixelSize: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+            }
+            
+            // Boutons
+            Row {
+                spacing: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+                
+                Button {
+                    text: "Choisir fichier"
+                    width: 130
+                    height: 40
+                    background: Rectangle {
+                        color: parent.hovered ? "#3A3A3A" : "#2A2A2A"
+                        border.color: "#555"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#FFFFFF"
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        var path = app.selectImageFile()
+                        if (path) {
+                            imageCropPopup.selectedImagePath = "file:///" + path
+                            imageCropPopup.imageScale = 1.0
+                            imageCropPopup.imageX = 0
+                            imageCropPopup.imageY = 0
+                        }
+                    }
+                }
+                
+                Button {
+                    text: "Annuler"
+                    width: 100
+                    height: 40
+                    background: Rectangle {
+                        color: parent.hovered ? "#3A3A3A" : "#2A2A2A"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#FFFFFF"
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: imageCropPopup.close()
+                }
+                
+                Button {
+                    text: "Valider"
+                    width: 100
+                    height: 40
+                    enabled: imageCropPopup.selectedImagePath !== ""
+                    background: Rectangle {
+                        color: parent.enabled ? (parent.hovered ? "#00CC00" : "#00AA00") : "#333333"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: parent.enabled ? "#FFFFFF" : "#666666"
+                        font.bold: true
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        userProfilePopup.profileImagePath = imageCropPopup.selectedImagePath
+                        
+                        // Sauvegarder immédiatement dans le vault
+                        if (imageCropPopup.selectedImagePath && window.currentUser) {
+                            app.saveProfileImage(window.currentUser, imageCropPopup.selectedImagePath)
+                        }
+                        
+                        imageCropPopup.close()
+                    }
+                }
+            }
+        }
+    }
+    // POPUP GESTION FAVORIS
+    Popup {
+        id: manageFavoritesPopup
+        anchors.centerIn: parent
+        width: 600
+        height: 500
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        
+        background: Rectangle {
+            color: "#1A1A1A"
+            radius: 12
+            border.color: "#333"
+            border.width: 1
+        }
+        
+        Column {
+            anchors.fill: parent
+            anchors.margins: 30
+            spacing: 20
+            
+            Text {
+                text: "Gérer les favoris"
+                font.pixelSize: 24
+                font.bold: true
+                color: "#FFFFFF"
+            }
+            
+            Rectangle {
+                width: parent.width
+                height: parent.height - 100
+                color: "#0F0F0F"
+                radius: 8
+                
+                ListView {
+                    id: favoritesListView
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 5
+                    clip: true
+                    
+                    model: window.favoritePages.length
+                    
+                    delegate: Rectangle {
+                        width: favoritesListView.width
+                        height: 50
+                        color: favItemMouse.containsMouse ? "#2A2A2A" : "transparent"
+                        radius: 6
+                        
+                        Row {
+                            anchors.fill: parent
+                            anchors.margins: 10
+                            spacing: 10
+                            
+                            Text {
+                                text: window.favoritePages[index].icon
+                                font.pixelSize: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            
+                            Text {
+                                text: window.favoritePages[index].name
+                                color: "#FFFFFF"
+                                font.pixelSize: 14
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width - 100
+                            }
+                            
+                            Text {
+                                text: "✕"
+                                color: "#FF6B6B"
+                                font.pixelSize: 16
+                                anchors.verticalCenter: parent.verticalCenter
+                                
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        var newFavs = window.favoritePages.slice()
+                                        newFavs.splice(index, 1)
+                                        window.favoritePages = newFavs
+                                    }
+                                }
+                            }
+                        }
+                        
+                        MouseArea {
+                            id: favItemMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            z: -1
+                        }
+                    }
+                }
+            }
+            
+            Button {
+                text: "Fermer"
+                width: 120
+                height: 40
+                anchors.horizontalCenter: parent.horizontalCenter
+                background: Rectangle {
+                    color: parent.hovered ? "#CCCCCC" : "#FFFFFF"
+                    radius: 8
+                }
+                contentItem: Text {
+                    text: parent.text
+                    color: "#000000"
+                    font.bold: true
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+                onClicked: manageFavoritesPopup.close()
+            }
+        }
+    }
+    
+    // POPUP RENOMMER FAVORI
+    Popup {
+        id: renameFavoritePopup
+        anchors.centerIn: parent
+        width: 400
+        height: 200
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        
+        property int editingIndex: -1
+        
+        background: Rectangle {
+            color: "#1A1A1A"
+            radius: 12
+            border.color: "#333"
+            border.width: 1
+        }
+        
+        Column {
+            anchors.fill: parent
+            anchors.margins: 30
+            spacing: 20
+            
+            Text {
+                text: "Renommer le favori"
+                font.pixelSize: 20
+                font.bold: true
+                color: "#FFFFFF"
+            }
+            
+            TextField {
+                id: renameField
+                width: parent.width
+                height: 40
+                color: "#FFFFFF"
+                font.pixelSize: 14
+                background: Rectangle {
+                    color: "#0F0F0F"
+                    border.color: renameField.activeFocus ? "#8AB4F8" : "#333"
+                    border.width: 2
+                    radius: 6
+                }
+            }
+            
+            Row {
+                spacing: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+                
+                Button {
+                    text: "Annuler"
+                    width: 100
+                    height: 40
+                    background: Rectangle {
+                        color: parent.hovered ? "#3A3A3A" : "#2A2A2A"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#FFFFFF"
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: renameFavoritePopup.close()
+                }
+                
+                Button {
+                    text: "Valider"
+                    width: 100
+                    height: 40
+                    background: Rectangle {
+                        color: parent.hovered ? "#00CC00" : "#00AA00"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#FFFFFF"
+                        font.bold: true
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        if (renameFavoritePopup.editingIndex >= 0 && renameField.text.length > 0) {
+                            var newFavs = window.favoritePages.slice()
+                            newFavs[renameFavoritePopup.editingIndex].name = renameField.text
+                            window.favoritePages = newFavs
+                            window.saveFavoritesToVault()
+                            renameFavoritePopup.close()
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // POPUP CRÉER DOSSIER
+    Popup {
+        id: createFolderPopup
+        anchors.centerIn: parent
+        width: 400
+        height: 250
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        
+        background: Rectangle {
+            color: "#1A1A1A"
+            radius: 12
+            border.color: "#333"
+            border.width: 1
+        }
+        
+        Column {
+            anchors.fill: parent
+            anchors.margins: 30
+            spacing: 20
+            
+            Text {
+                text: "Créer un dossier"
+                font.pixelSize: 20
+                font.bold: true
+                color: "#FFFFFF"
+            }
+            
+            Column {
+                spacing: 8
+                width: parent.width
+                
+                Text {
+                    text: "Nom du dossier"
+                    font.pixelSize: 12
+                    color: "#999999"
+                }
+                
+                TextField {
+                    id: folderNameField
+                    width: parent.width
+                    height: 40
+                    placeholderText: "Nouveau dossier"
+                    color: "#FFFFFF"
+                    font.pixelSize: 14
+                    background: Rectangle {
+                        color: "#0F0F0F"
+                        border.color: folderNameField.activeFocus ? "#8AB4F8" : "#333"
+                        border.width: 2
+                        radius: 6
+                    }
+                }
+            }
+            
+            Column {
+                spacing: 8
+                width: parent.width
+                
+                Text {
+                    text: "Icône"
+                    font.pixelSize: 12
+                    color: "#999999"
+                }
+                
+                TextField {
+                    id: folderIconField
+                    width: parent.width
+                    height: 40
+                    text: "📁"
+                    color: "#FFFFFF"
+                    font.pixelSize: 14
+                    background: Rectangle {
+                        color: "#0F0F0F"
+                        border.color: folderIconField.activeFocus ? "#8AB4F8" : "#333"
+                        border.width: 2
+                        radius: 6
+                    }
+                }
+            }
+            
+            Row {
+                spacing: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+                
+                Button {
+                    text: "Annuler"
+                    width: 100
+                    height: 40
+                    background: Rectangle {
+                        color: parent.hovered ? "#3A3A3A" : "#2A2A2A"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#FFFFFF"
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: createFolderPopup.close()
+                }
+                
+                Button {
+                    text: "Créer"
+                    width: 100
+                    height: 40
+                    background: Rectangle {
+                        color: parent.hovered ? "#00CC00" : "#00AA00"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        color: "#FFFFFF"
+                        font.bold: true
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        if (folderNameField.text.length > 0) {
+                            var newFavs = window.favoritePages.slice()
+                            newFavs.push({
+                                name: folderNameField.text,
+                                icon: folderIconField.text,
+                                type: "folder",
+                                isFolder: true,
+                                children: []
+                            })
+                            window.favoritePages = newFavs
+                            window.saveFavoritesToVault()
+                            folderNameField.text = ""
+                            folderIconField.text = "📁"
+                            createFolderPopup.close()
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // LOGIN PAGE
     Component {
         id: loginPage
         Rectangle {
             color: "#0A0A0A"
+            
             Column {
                 anchors.centerIn: parent
-                spacing: 30
+                spacing: 25
                 width: 400
                 
+                Image {
+                    source: "../../assets/Neosiris.ico"
+                    width: 120
+                    height: 120
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+                
                 Text {
-                    text: "⚖️ NEOSIRIS"
-                    font.pixelSize: 56
+                    text: "NEOSIRIS"
+                    font.pixelSize: 42
                     font.bold: true
                     color: "#FFFFFF"
                     anchors.horizontalCenter: parent.horizontalCenter
                 }
                 
+                TextField {
+                    id: usernameField
+                    width: parent.width
+                    height: 50
+                    placeholderText: "Nom d'utilisateur"
+                    color: "#FFFFFF"
+                    font.pixelSize: 14
+                    background: Rectangle {
+                        color: "#1A1A1A"
+                        border.color: usernameField.activeFocus ? "#FFFFFF" : "#333"
+                        border.width: 2
+                        radius: 8
+                    }
+                }
+                
                 Rectangle {
                     width: parent.width
-                    height: 350
-                    color: "#1E1E1E"
-                    radius: 16
+                    height: 50
+                    color: "#1A1A1A"
+                    border.color: passwordField.activeFocus ? "#FFFFFF" : "#333"
+                    border.width: 2
+                    radius: 8
                     
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 20
-                        width: parent.width - 60
-                        
-                        Text {
-                            text: "Connexion"
-                            font.pixelSize: 24
-                            font.bold: true
-                            color: "#FFFFFF"
-                        }
-                        
-                        ComboBox {
-                            id: usernameCombo
-                            width: parent.width
-                            editable: true
-                            model: app.getSavedUsers()
-                            displayText: editText || currentText
-                            
-                            background: Rectangle {
-                                color: "#2B2B2B"
-                                radius: 8
-                                border.color: usernameCombo.activeFocus ? "#2596be" : "#3B3B3B"
-                                border.width: 2
-                            }
-                            
-                            contentItem: TextInput {
-                                leftPadding: 12
-                                text: usernameCombo.editText
-                                font.pixelSize: 14
-                                color: "#FFFFFF"
-                                verticalAlignment: Text.AlignVCenter
-                                selectByMouse: true
-                            }
-                            
-                            delegate: ItemDelegate {
-                                width: usernameCombo.width
-                                height: 40
-                                
-                                contentItem: Text {
-                                    text: modelData
-                                    font.pixelSize: 14
-                                    color: "#FFFFFF"
-                                    verticalAlignment: Text.AlignVCenter
-                                    leftPadding: 12
-                                }
-                                
-                                background: Rectangle {
-                                    color: parent.hovered ? "#3B3B3B" : "#2B2B2B"
-    }}
-                            
-                            popup: Popup {
-                                y: usernameCombo.height
-                                width: usernameCombo.width
-                                height: Math.min(contentItem.implicitHeight, 200)
-                                padding: 0
-                                
-                                contentItem: ListView {
-                                    clip: true
-                                    implicitHeight: contentHeight
-                                    model: usernameCombo.delegateModel
-                                    currentIndex: usernameCombo.highlightedIndex
-                                    
-                                    ScrollIndicator.vertical: ScrollIndicator { }
-                                }
-                                
-                                background: Rectangle {
-                                    color: "#2B2B2B"
-                                    radius: 8
-                                    border.color: "#3B3B3B"
-                                    border.width: 1
-    }}
-                            
-                            Keys.onReturnPressed: passwordField.forceActiveFocus()
-                            Keys.onEnterPressed: passwordField.forceActiveFocus()
-                        }
+                    Row {
+                        anchors.fill: parent
                         
                         TextField {
                             id: passwordField
-                            width: parent.width
+                            width: parent.width - 50
+                            height: parent.height
                             placeholderText: "Mot de passe"
-                            echoMode: TextInput.Password
-                            
-                            background: Rectangle {
-                                color: "#2B2B2B"
-                                radius: 8
-                                border.color: passwordField.activeFocus ? "#2596be" : "#3B3B3B"
-                                border.width: 2
-                            }
-                            
+                            echoMode: showPasswordIcon.visible && showPasswordIcon.showPassword ? TextInput.Normal : TextInput.Password
                             color: "#FFFFFF"
-                            leftPadding: 12
                             font.pixelSize: 14
-                            
-                            Keys.onReturnPressed: loginButton.clicked()
-                            Keys.onEnterPressed: loginButton.clicked()
+                            leftPadding: 15
+                            background: Rectangle { color: "transparent" }
+                            onAccepted: loginButton.clicked()
                         }
                         
-                        Button {
-                            id: loginButton
-                            text: "Se connecter"
-                            width: parent.width
-                            height: 45
+                        Item {
+                            id: showPasswordIcon
+                            width: 40
+                            height: parent.height
+                            visible: passwordField.text.length > 0
+                            property bool showPassword: false
                             
-                            background: Rectangle {
-                                color: parent.hovered ? "#1e7da0" : "#2596be"
-                                radius: 8
-                            }
-                            
-                            contentItem: Text {
-                                text: parent.text
-                                font.pixelSize: 14
-                                font.bold: true
-                                color: "#FFFFFF"
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            
-                            onClicked: {
-                                var username = usernameCombo.editText || usernameCombo.currentText
-                                var password = passwordField.text
+                            Rectangle {
+                                width: 24
+                                height: 24
+                                color: "transparent"
+                                anchors.centerIn: parent
                                 
-                                if (username && password) {
-                                    loadingScreen.show()
+                                Rectangle {
+                                    width: 20
+                                    height: 12
+                                    color: "transparent"
+                                    border.color: showPasswordIcon.showPassword ? "#FFFFFF" : "#666666"
+                                    border.width: 1.5
+                                    radius: 10
+                                    anchors.centerIn: parent
                                     
-                                    // Donner le temps à l'UI de se rafraîchir
-                                    Qt.callLater(function() {
-                                        if (app.openVault(username, password)) {
-                                            window.vaultOpen = true
-                                            pageStack.replace(mainLayout)
-                                        } else {
-                                            loadingScreen.visible = false
-                                        }
-                                    })
+                                    Rectangle {
+                                        width: 6
+                                        height: 6
+                                        radius: 3
+                                        color: showPasswordIcon.showPassword ? "#FFFFFF" : "#666666"
+                                        anchors.centerIn: parent
+                                    }
+                                }
+                                
+                                Rectangle {
+                                    width: 26
+                                    height: 1.5
+                                    color: "#666666"
+                                    rotation: 45
+                                    anchors.centerIn: parent
+                                    visible: !showPasswordIcon.showPassword
                                 }
                             }
+                            
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onPressed: showPasswordIcon.showPassword = true
+                                onReleased: showPasswordIcon.showPassword = false
+                                onCanceled: showPasswordIcon.showPassword = false
+                            }
                         }
-                        
-                        Text {
-                            text: "Première connexion ? Entrez un nom d'utilisateur et mot de passe pour créer votre vault."
-                            font.pixelSize: 11
-                            color: "#666666"
-                            wrapMode: Text.WordWrap
-                            width: parent.width
-                            horizontalAlignment: Text.AlignHCenter
+                    }
+                }
+                
+                Button {
+                    id: loginButton
+                    text: "Connexion"
+                    width: parent.width
+                    height: 55
+                    background: Rectangle {
+                        color: loginButton.hovered ? "#CCCCCC" : "#FFFFFF"
+                        radius: 8
+                    }
+                    contentItem: Text {
+                        text: loginButton.text
+                        font.pixelSize: 16
+                        font.bold: true
+                        color: "#000000"
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        if(app.openVault(usernameField.text, passwordField.text)) {
+                            window.vaultOpen = true
+                            window.currentUser = usernameField.text
+                            if(usernameField.text === "Alex" && passwordField.text === "..8000") {
+                                window.isEngineerMode = true
+                            }
+                            
+                            // Charger la photo de profil
+                            var savedImage = app.loadProfileImage(window.currentUser)
+                            if (savedImage) {
+                                userProfilePopup.profileImagePath = savedImage
+                            }
+                            
+                            // Charger les favoris
+                            loadFavoritesFromVault()
+                            
+                            openMenuTab()
                         }
                     }
                 }
@@ -261,1517 +1137,1074 @@ ApplicationWindow {
         }
     }
     
+    // MENU PRINCIPAL
     Component {
-        id: mainLayout
+        id: menuPrincipal
         Rectangle {
             color: "#0A0A0A"
+            implicitHeight: 1200
             
-            Row {
-                anchors.fill: parent
+            Column {
+                anchors.centerIn: parent
+                spacing: 50
                 
-                // Sidebar
-                Rectangle {
-                    width: 220
-                    height: parent.height
-                    color: "#1E1E1E"
-                    
-                    Column {
-                        anchors.fill: parent
-                        anchors.margins: 15
-                        spacing: 10
-                        
-                        Text {
-                            text: "⚖️ NEOSIRIS"
-                            font.pixelSize: 20
-                            font.bold: true
-                            color: "#FFFFFF"
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                        
-                        Rectangle {
-                            width: parent.width
-                            height: 1
-                            color: "#3B3B3B"
-                        }
-                        
-                        Repeater {
-                            model: [
-                                {icon: "📊", text: "Tableau de bord", page: "dashboard", shortcut: "Ctrl+D"},
-                                {icon: "👤", text: "Profils", page: "profiles", shortcut: "Ctrl+P"},
-                                {icon: "👥", text: "Clients", page: "clients", shortcut: "Ctrl+C"},
-                                {icon: "⚔️", text: "Adversaires", page: "adversaires", shortcut: "Ctrl+A"},
-                                {icon: "📄", text: "Pièces", page: "pieces", shortcut: "Ctrl+E"},
-                                {icon: "🤖", text: "Assistant IA", page: "ia", shortcut: "Ctrl+I"},
-                                {icon: "📚", text: "Base juridique", page: "base", shortcut: "F1"}
-                            ]
-                            
-                            Button {
-                                width: parent.width
-                                height: 45
-                                
-                                background: Rectangle {
-                                    color: window.currentPage === modelData.page ? "#2596be" : (parent.hovered ? "#2B2B2B" : "transparent")
-                                    radius: 8
-                                }
-                                
-                                contentItem: Row {
-                                    spacing: 10
-                                    leftPadding: 12
-                                    
-                                    Text {
-                                        text: modelData.icon
-                                        font.pixelSize: 18
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                    
-                                    Text {
-                                        text: modelData.text
-                                        font.pixelSize: 13
-                                        color: "#FFFFFF"
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-                                }
-                                
-                                onClicked: {
-                                    window.currentPage = modelData.page
-                                    switch(modelData.page) {
-                                        case "dashboard": contentStack.replace(dashboardPage); break;
-                                        case "profiles": contentStack.replace(profilesPage); break;
-                                        case "clients": contentStack.replace(clientsPage); break;
-                                        case "adversaires": contentStack.replace(adversairesPage); break;
-                                        case "pieces": contentStack.replace(piecesPage); break;
-                                        case "ia": contentStack.replace(iaPage); break;
-                                        case "base": contentStack.replace(basePage); break;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        Item { Layout.fillHeight: true }
-                        
-                        Rectangle {
-                            width: parent.width
-                            height: 1
-                            color: "#3B3B3B"
-                        }
-                        
-                        Button {
-                            width: parent.width
-                            height: 40
-                            
-                            background: Rectangle {
-                                color: parent.hovered ? "#8B0000" : "#A52A2A"
-                                radius: 8
-                            }
-                            
-                            contentItem: Text {
-                                text: "🔒 Verrouiller"
-                                font.pixelSize: 13
-                                color: "#FFFFFF"
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            
-                            onClicked: {
-                                app.closeVault()
-                                window.vaultOpen = false
-                                window.currentPage = "login"
-                                pageStack.replace(loginPage)
-                            }
-                        }
-                    }
+                Image {
+                    source: "../../assets/Neosiris.ico"
+                    width: 100
+                    height: 100
+                    anchors.horizontalCenter: parent.horizontalCenter
                 }
                 
-                // Content Area
-                StackView {
-                    id: contentStack
-                    width: parent.width - 220
-                    height: parent.height
-                    initialItem: dashboardPage
+                Text {
+                    text: "Sélectionnez votre interface"
+                    font.pixelSize: 28
+                    font.bold: true
+                    color: "#FFFFFF"
+                    anchors.horizontalCenter: parent.horizontalCenter
+                }
+                
+                Grid {
+                    columns: 4
+                    rows: 3
+                    spacing: 25
+                    anchors.horizontalCenter: parent.horizontalCenter
                     
-                    replaceEnter: Transition {
-                        PropertyAnimation { property: "opacity"; from: 0; to: 1; duration: 200 }
-                    }
-                    replaceExit: Transition {
-                        PropertyAnimation { property: "opacity"; from: 1; to: 0; duration: 200 }
+                    Repeater {
+                        model: [
+                            {icon: "📊", text: "Tableau de Bord", interface: "dashboard"},
+                            {icon: "⚖️", text: "Avocats", interface: "avocat"},
+                            {icon: "🏢", text: "Syndic", interface: "syndic"},
+                            {icon: "🔧", text: "Expert Technique", interface: "expert_tech"},
+                            {icon: "🏥", text: "Expert Santé", interface: "expert_sante"},
+                            {icon: "💼", text: "Chargé d'affaires", interface: "charge_affaires"},
+                            {icon: "🏛️", text: "Architecte", interface: "architecte"},
+                            {icon: "☁️", text: "Stockage Cloud", interface: "stockage_cloud"},
+                            {icon: "📧", text: "Mails", interface: "mails"},
+                            {icon: "📅", text: "Calendrier", interface: "calendrier"},
+                            {icon: "⚙️", text: "Paramètres", interface: "parametres"}
+                        ]
+                        
+                        Rectangle {
+                            width: 200
+                            height: 200
+                            color: interfaceMouse.containsMouse ? "#1A1A1A" : "#0F0F0F"
+                            border.color: "#FFFFFF"
+                            border.width: 2
+                            radius: 12
+                            
+                            MouseArea {
+                                id: interfaceMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: navigateToInterface(modelData.interface, modelData.text)
+                            }
+                            
+                            Column {
+                                anchors.centerIn: parent
+                                spacing: 15
+                                
+                                Text {
+                                    text: modelData.icon
+                                    font.pixelSize: 60
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                }
+                                
+                                Text {
+                                    text: modelData.text
+                                    font.pixelSize: 18
+                                    font.bold: true
+                                    color: "#FFFFFF"
+                                    horizontalAlignment: Text.AlignHCenter
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
     
-    // Dashboard Page
+    // INTERFACE PRINCIPALE
+    StackView {
+        id: mainStack
+        anchors.fill: parent
+        initialItem: window.vaultOpen ? mainWorkspace : loginPage
+    }
+    
     Component {
-        id: dashboardPage
+        id: mainWorkspace
         Rectangle {
             color: "#0A0A0A"
-            
-            property int currentTab: 0
             
             Column {
                 anchors.fill: parent
                 spacing: 0
                 
-                // Header avec icône, titre et onglets
+                // ONGLETS STYLE CHROME
                 Rectangle {
                     width: parent.width
-                    height: 140
-                    color: "#1E1E1E"
+                    height: 36
+                    color: "#202124"
                     
-                    Column {
+                    Row {
                         anchors.fill: parent
                         spacing: 0
                         
-                        // Titre et actions
+                        // Logo
                         Rectangle {
-                            width: parent.width
-                            height: 80
-                            color: "transparent"
+                            width: 50
+                            height: parent.height
+                            color: logoMouse.containsMouse ? "#3C4043" : "transparent"
                             
-                            Row {
+                            Image {
+                                source: "../../assets/Neosiris.ico"
+                                width: 20
+                                height: 20
+                                anchors.centerIn: parent
+                            }
+                            
+                            MouseArea {
+                                id: logoMouse
                                 anchors.fill: parent
-                                anchors.margins: 30
-                                spacing: 20
-                                
-                                // Icône et titre
-                                Row {
-                                    spacing: 15
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    
-                                    Rectangle {
-                                        width: 60
-                                        height: 60
-                                        radius: 12
-                                        color: "#FFFFFF"
-                                        
-                                        Text {
-                                            text: "📊"
-                                            font.pixelSize: 32
-                                            anchors.centerIn: parent
-                                        }
-                                    }
-                                    
-                                    Column {
-                                        anchors.verticalCenter: parent.verticalCenter
-                                        spacing: 5
-                                        
-                                        Text {
-                                            text: "Tableau de bord"
-                                            font.pixelSize: 28
-                                            font.bold: true
-                                            color: "#FFFFFF"
-                                        }
-                                        
-                                        Text {
-                                            text: "Vue d'ensemble et statistiques"
-                                            font.pixelSize: 13
-                                            color: "#888888"
-                                        }
-                                    }
-                                }
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: navigateToMenu()
                             }
                         }
                         
                         // Onglets
-                        Rectangle {
-                            width: parent.width
-                            height: 60
-                            color: "transparent"
+                        Repeater {
+                            id: tabsRepeater
+                            model: window.openTabs.length
                             
-                            Row {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 30
-                                anchors.verticalCenter: parent.verticalCenter
-                                spacing: 5
+                            Item {
+                                width: Math.min(240, Math.max(140, (parent.width - 150) / Math.max(window.openTabs.length, 1)))
+                                height: parent.height
                                 
-                                Repeater {
-                                    model: ["Vue d'ensemble", "Statistiques", "Activité", "Performances", "Backups", "RGPD", "Licences"]
+                                // Onglet trapézoïdal Chrome
+                                Canvas {
+                                    id: tabShape
+                                    anchors.fill: parent
                                     
-                                    Button {
-                                        height: 45
+                                    property bool isActive: window.activeTabIndex === index
+                                    
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.reset()
                                         
-                                        background: Rectangle {
-                                            color: currentTab === index ? "#2596be" : (parent.hovered ? "#252525" : "transparent")
-                                            radius: 8
+                                        var w = width
+                                        var h = height
+                                        var curve = 8
+                                        
+                                        ctx.fillStyle = isActive ? "#313235" : "#202124"
+                                        
+                                        ctx.beginPath()
+                                        ctx.moveTo(curve, h)
+                                        ctx.lineTo(curve/2, curve)
+                                        ctx.quadraticCurveTo(curve, 0, curve*2, 0)
+                                        ctx.lineTo(w - curve*2, 0)
+                                        ctx.quadraticCurveTo(w - curve, 0, w - curve/2, curve)
+                                        ctx.lineTo(w - curve, h)
+                                        ctx.fill()
+                                    }
+                                    
+                                    Connections {
+                                        target: window
+                                        function onActiveTabIndexChanged() {
+                                            tabShape.requestPaint()
                                         }
-                                        
-                                        contentItem: Text {
-                                            text: modelData
-                                            font.pixelSize: 13
-                                            font.bold: currentTab === index
-                                            color: "#FFFFFF"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                            leftPadding: 20
-                                            rightPadding: 20
-                                        }
-                                        
-                                        onClicked: currentTab = index
+                                    }
+                                }
+                                
+                                MouseArea {
+                                    anchors.fill: parent
+                                    anchors.rightMargin: 30
+                                    onClicked: {
+                                        window.activeTabIndex = index
+                                        updateCurrentAddress()
+                                        window.tabsChanged()
+                                    }
+                                }
+                                
+                                Row {
+                                    anchors.centerIn: parent
+                                    anchors.horizontalCenterOffset: -10
+                                    spacing: 8
+                                    
+                                    Text {
+                                        text: window.openTabs[index] ? (window.openTabs[index].icon || "📄") : ""
+                                        font.pixelSize: 14
+                                    }
+                                    
+                                    Text {
+                                        text: window.openTabs[index] ? window.openTabs[index].name : ""
+                                        color: window.activeTabIndex === index ? "#E8EAED" : "#9AA0A6"
+                                        font.pixelSize: 13
+                                        width: parent.parent.width - 80
+                                        elide: Text.ElideRight
+                                    }
+                                }
+                                
+                                Rectangle {
+                                    anchors.right: parent.right
+                                    anchors.rightMargin: 10
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 20
+                                    height: 20
+                                    radius: 10
+                                    color: closeMouse.containsMouse ? "#5F6368" : "transparent"
+                                    
+                                    Text {
+                                        text: "✕"
+                                        color: "#9AA0A6"
+                                        font.pixelSize: 11
+                                        anchors.centerIn: parent
+                                    }
+                                    
+                                    MouseArea {
+                                        id: closeMouse
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: closeTab(index)
                                     }
                                 }
                             }
                         }
+                        
+                        // Bouton +
+                        Rectangle {
+                            width: 36
+                            height: 28
+                            radius: 14
+                            color: newTabMouse.containsMouse ? "#3C4043" : "transparent"
+                            anchors.verticalCenter: parent.verticalCenter
+                            
+                            Text {
+                                text: "+"
+                                font.pixelSize: 18
+                                color: "#9AA0A6"
+                                anchors.centerIn: parent
+                            }
+                            
+                            MouseArea {
+                                id: newTabMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: openMenuTab()
+                            }
+                        }
+                        
+                        Item { width: 10; height: 1 }
                     }
                 }
                 
-                // Contenu selon l'onglet
+                // BARRE ADRESSE
                 Rectangle {
-                    id: dashboardContent
                     width: parent.width
-                    height: parent.height - 140
-                    color: "#0A0A0A"
+                    height: 46
+                    color: "#313235"
                     
-                    Flickable {
+                    Row {
                         anchors.fill: parent
-                        anchors.margins: 30
-                        contentHeight: contentColumn.height
-                        clip: true
+                        anchors.margins: 8
+                        spacing: 8
                         
-                        Column {
-                            id: contentColumn
-                            width: parent.width
-                            spacing: 25
+                        Row {
+                            spacing: 4
+                            anchors.verticalCenter: parent.verticalCenter
                             
-                            // Vue d'ensemble
-                            Column {
-                                visible: currentTab === 0
-                                width: parent.width
-                                spacing: 25
-                                
-                                // Stats principales
-                                Grid {
-                                    width: parent.width
-                                    columns: 3
-                                    spacing: 20
-                                    
-                                    Repeater {
-                                        model: {
-                                            var stats = app.getAppStats()
-                                            return [
-                                                {title: "Profils", value: stats.profiles, icon: "👤", color: "#FFFFFF", tooltip: "Nombre total de profils"},
-                                                {title: "Clients", value: stats.clients, icon: "👥", color: "#FFFFFF", tooltip: "Nombre total de clients"},
-                                                {title: "Dossiers", value: stats.dossiers, icon: "📁", color: "#FFFFFF", tooltip: "Nombre total de dossiers"},
-                                                {title: "Adversaires", value: stats.adversaires, icon: "⚔️", color: "#FFFFFF", tooltip: "Nombre total d'adversaires"},
-                                                {title: "Missions Std", value: stats.missions_std, icon: "📋", color: "#FFFFFF", tooltip: "Missions standard"},
-                                                {title: "Missions Premium", value: stats.missions_prm, icon: "⭐", color: "#FFFFFF", tooltip: "Missions premium"}
-                                            ]
-                                        }
-                                        
-                                        Rectangle {
-                                            width: (parent.width - 40) / 3
-                                            height: 130
-                                            color: "#1E1E1E"
-                                            radius: 12
-                                            border.color: "#3B3B3B"
-                                            border.width: 1
-                                            
-                                            MouseArea {
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                
-                                                onEntered: parent.border.color = modelData.color
-                                                onExited: parent.border.color = "#3B3B3B"
-                                                
-                                                ToolTip {
-                                                    visible: parent.containsMouse
-                                                    text: modelData.tooltip
-                                                    delay: 500
-                                                }
-                                            }
-                                            
-                                            Column {
-                                                anchors.centerIn: parent
-                                                spacing: 12
-                                                
-                                                Text {
-                                                    text: modelData.icon
-                                                    font.pixelSize: 36
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                }
-                                                
-                                                Text {
-                                                    text: modelData.value
-                                                    font.pixelSize: 32
-                                                    font.bold: true
-                                                    color: modelData.color
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                }
-                                                
-                                                Text {
-                                                    text: modelData.title
-                                                    font.pixelSize: 13
-                                                    color: "#888888"
-                                                    anchors.horizontalCenter: parent.horizontalCenter
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                // Row: Vault + Activité
-                                Row {
-                                    width: parent.width
-                                    spacing: 20
-                                    
-                                    Rectangle {
-                                        width: (parent.width - 20) / 2
-                                        height: 220
-                                        color: "#1E1E1E"
-                                        radius: 12
-                                        border.color: "#3B3B3B"
-                                        border.width: 1
-                                        
-                                        Column {
-                                            anchors.fill: parent
-                                            anchors.margins: 25
-                                            spacing: 20
-                                            
-                                            Row {
-                                                spacing: 12
-                                                Text { text: "💾"; font.pixelSize: 24 }
-                                                Text { text: "Coffre-fort"; font.pixelSize: 20; font.bold: true; color: "#FFFFFF" }
-                                            }
-                                            
-                                            Grid {
-                                                width: parent.width
-                                                columns: 2
-                                                columnSpacing: 25
-                                                rowSpacing: 18
-                                                
-                                                Column {
-                                                    spacing: 6
-                                                    Text { text: "Taille totale"; font.pixelSize: 11; color: "#888888" }
-                                                    Text { text: app.getVaultSize(); font.pixelSize: 18; font.bold: true; color: "#FFFFFF" }
-                                                }
-                                                
-                                                Column {
-                                                    spacing: 6
-                                                    Text { text: "Fichiers chiffrés"; font.pixelSize: 11; color: "#888888" }
-                                                    Text { text: app.getVaultFilesCount(); font.pixelSize: 18; font.bold: true; color: "#FFFFFF" }
-                                                }
-                                                
-                                                Column {
-                                                    spacing: 6
-                                                    Text { text: "Dernier backup"; font.pixelSize: 11; color: "#888888" }
-                                                    Text { text: app.getLastBackupDate(); font.pixelSize: 18; font.bold: true; color: "#FFFFFF" }
-                                                }
-                                                
-                                                Column {
-                                                    spacing: 6
-                                                    Text { text: "Activité (30j)"; font.pixelSize: 11; color: "#888888" }
-                                                    Text { text: app.getAppStats().recent_activity || 0; font.pixelSize: 18; font.bold: true; color: "#FFFFFF" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    
-                                    Rectangle {
-                                        width: (parent.width - 20) / 2
-                                        height: 220
-                                        color: "#1E1E1E"
-                                        radius: 12
-                                        border.color: "#3B3B3B"
-                                        border.width: 1
-                                        
-                                        Column {
-                                            anchors.fill: parent
-                                            anchors.margins: 25
-                                            spacing: 15
-                                            
-                                            Row {
-                                                spacing: 12
-                                                Text { text: "📝"; font.pixelSize: 24 }
-                                                Text { text: "Activité récente"; font.pixelSize: 20; font.bold: true; color: "#FFFFFF" }
-                                            }
-                                            
-                                            ListView {
-                                                width: parent.width
-                                                height: 140
-                                                clip: true
-                                                spacing: 8
-                                                model: app.getRecentActivity(5)
-                                                
-                                                delegate: Row {
-                                                    spacing: 12
-                                                    width: parent.width
-                                                    Text { text: modelData.icon || "•"; font.pixelSize: 16; color: "#FFFFFF" }
-                                                    Text { 
-                                                        text: {
-                                                            if (modelData.timestamp) {
-                                                                var date = new Date(modelData.timestamp)
-                                                                return Qt.formatDateTime(date, "dd/MM hh:mm")
-                                                            }
-                                                            return ""
-                                                        }
-                                                        font.pixelSize: 11
-                                                        color: "#666666"
-                                                        width: 65
-                                                    }
-                                                    Text { text: modelData.action || ""; font.pixelSize: 13; color: "#FFFFFF"; width: 120; elide: Text.ElideRight }
-                                                    Text { text: modelData.details || ""; font.pixelSize: 12; color: "#888888"; width: parent.width - 240; elide: Text.ElideRight }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                            Rectangle {
+                                width: 32; height: 32; radius: 16
+                                color: backMouse.containsMouse ? "#5F6368" : "transparent"
+                                Text { text: "◀"; color: "#9AA0A6"; font.pixelSize: 14; anchors.centerIn: parent }
+                                MouseArea { id: backMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
                             }
                             
-                            // Statistiques
-                            Column {
-                                visible: currentTab === 1
-                                width: parent.width
-                                spacing: 25
-                                
-                                Rectangle {
-                                    width: parent.width
-                                    height: 160
-                                    color: "#1E1E1E"
-                                    radius: 12
-                                    border.color: "#3B3B3B"
-                                    border.width: 1
-                                    
-                                    Column {
-                                        anchors.fill: parent
-                                        anchors.margins: 25
-                                        spacing: 20
-                                        
-                                        Row {
-                                            spacing: 12
-                                            Text { text: "📁"; font.pixelSize: 24 }
-                                            Text { text: "Dossiers et Missions"; font.pixelSize: 20; font.bold: true; color: "#FFFFFF" }
-                                        }
-                                        
-                                        Row {
-                                            width: parent.width
-                                            spacing: 50
-                                            
-                                            Column {
-                                                spacing: 6
-                                                Text { text: "Dossiers ouverts"; font.pixelSize: 11; color: "#888888" }
-                                                Text { text: app.getAppStats().dossiers_ouverts || 0; font.pixelSize: 28; font.bold: true; color: "#FFFFFF" }
-                                            }
-                                            
-                                            Column {
-                                                spacing: 6
-                                                Text { text: "Dossiers fermés"; font.pixelSize: 11; color: "#888888" }
-                                                Text { text: app.getAppStats().dossiers_fermes || 0; font.pixelSize: 28; font.bold: true; color: "#FFFFFF" }
-                                            }
-                                            
-                                            Column {
-                                                spacing: 6
-                                                Text { text: "Total dossiers"; font.pixelSize: 11; color: "#888888" }
-                                                Text { text: app.getAppStats().dossiers || 0; font.pixelSize: 28; font.bold: true; color: "#FFFFFF" }
-                                            }
-                                            
-                                            Rectangle { width: 1; height: 70; color: "#3B3B3B" }
-                                            
-                                            Column {
-                                                spacing: 6
-                                                Text { text: "Missions en cours"; font.pixelSize: 11; color: "#888888" }
-                                                Text { text: app.getAppStats().missions_en_cours || 0; font.pixelSize: 28; font.bold: true; color: "#FFFFFF" }
-                                            }
-                                            
-                                            Column {
-                                                spacing: 6
-                                                Text { text: "Missions terminées"; font.pixelSize: 11; color: "#888888" }
-                                                Text { text: app.getAppStats().missions_terminees || 0; font.pixelSize: 28; font.bold: true; color: "#FFFFFF" }
-                                            }
-                                        }
-                                    }
-                                }
+                            Rectangle {
+                                width: 32; height: 32; radius: 16
+                                color: fwdMouse.containsMouse ? "#5F6368" : "transparent"
+                                Text { text: "▶"; color: "#9AA0A6"; font.pixelSize: 14; anchors.centerIn: parent }
+                                MouseArea { id: fwdMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
                             }
                             
-                            // Activité
-                            Column {
-                                visible: currentTab === 2
-                                width: parent.width
-                                spacing: 20
+                            Rectangle {
+                                width: 32; height: 32; radius: 16
+                                color: refMouse.containsMouse ? "#5F6368" : "transparent"
+                                Text { text: "⟳"; color: "#9AA0A6"; font.pixelSize: 16; anchors.centerIn: parent }
+                                MouseArea { id: refMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor }
+                            }
+                        }
+                        
+                        Rectangle {
+                            width: parent.width - 220
+                            height: 32
+                            radius: 16
+                            color: "#202124"
+                            border.color: addressField.activeFocus ? "#8AB4F8" : "transparent"
+                            border.width: 2
+                            anchors.verticalCenter: parent.verticalCenter
+                            
+                            Row {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 12
+                                spacing: 8
                                 
                                 Text {
-                                    text: "Journal d'activité complet"
-                                    font.pixelSize: 18
-                                    font.bold: true
-                                    color: "#FFFFFF"
+                                    text: "🔒"
+                                    font.pixelSize: 12
+                                    anchors.verticalCenter: parent.verticalCenter
                                 }
                                 
-                                Rectangle {
-                                    width: parent.width
-                                    height: 500
-                                    color: "#1E1E1E"
-                                    radius: 12
-                                    border.color: "#3B3B3B"
-                                    border.width: 1
-                                    
-                                    ListView {
-                                        anchors.fill: parent
-                                        anchors.margins: 20
-                                        clip: true
-                                        spacing: 10
-                                        model: app.getRecentActivity(50)
-                                        
-                                        delegate: Rectangle {
-                                            width: parent.width
-                                            height: 35
-                                            color: index % 2 === 0 ? "#252525" : "transparent"
-                                            radius: 6
-                                            
-                                            Row {
-                                                anchors.fill: parent
-                                                anchors.margins: 10
-                                                spacing: 15
-                                                
-                                                Text { text: modelData.icon || "•"; font.pixelSize: 18; color: "#FFFFFF"; width: 25 }
-                                                Text { 
-                                                    text: {
-                                                        if (modelData.timestamp) {
-                                                            var date = new Date(modelData.timestamp)
-                                                            return Qt.formatDateTime(date, "dd/MM/yyyy hh:mm:ss")
-                                                        }
-                                                        return ""
-                                                    }
-                                                    font.pixelSize: 11
-                                                    font.family: "Courier"
-                                                    color: "#666666"
-                                                    width: 130
-                                                }
-                                                Text { text: modelData.action || ""; font.pixelSize: 13; color: "#FFFFFF"; width: 140; elide: Text.ElideRight }
-                                                Text { text: modelData.details || ""; font.pixelSize: 12; color: "#888888"; width: parent.width - 450; elide: Text.ElideRight }
-                                                Text { text: modelData.user || ""; font.pixelSize: 11; color: "#666666"; width: 100 }
-                                            }
-                                        }
-                                    }
+                                TextField {
+                                    id: addressField
+                                    width: parent.width - 30
+                                    height: parent.height
+                                    text: window.currentAddress
+                                    placeholderText: "Rechercher..."
+                                    color: "#E8EAED"
+                                    font.pixelSize: 13
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    background: Rectangle { color: "transparent" }
+                                    onAccepted: navigateToAddress(text)
+                                }
+                            }
+                        }
+                        
+                        Row {
+                            spacing: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            
+                            Rectangle {
+                                width: 32; height: 32; radius: 16
+                                color: starMouse.containsMouse ? "#5F6368" : "transparent"
+                                
+                                Text { 
+                                    text: isCurrentPageInFavorites() ? "⭐" : "☆"
+                                    color: isCurrentPageInFavorites() ? "#FFA500" : "#9AA0A6"
+                                    font.pixelSize: 14
+                                    anchors.centerIn: parent
+                                }
+                                
+                                MouseArea { 
+                                    id: starMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: toggleCurrentPageFavorite()
                                 }
                             }
                             
-                            // Performances
-                            Column {
-                                visible: currentTab === 3
-                                width: parent.width
-                                spacing: 20
+                            Rectangle {
+                                width: 32; height: 32; radius: 16
+                                color: menuMouse.containsMouse ? "#5F6368" : "transparent"
                                 
-                                Text {
-                                    text: "Informations système et performances"
-                                    font.pixelSize: 18
-                                    font.bold: true
-                                    color: "#FFFFFF"
+                                Text { text: "⋮"; color: "#9AA0A6"; font.pixelSize: 20; anchors.centerIn: parent }
+                                
+                                MouseArea { 
+                                    id: menuMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: favoritesManageMenu.popup()
                                 }
                                 
-                                // Info système
-                                Rectangle {
-                                    width: parent.width
-                                    height: 600
-                                    color: "#1E1E1E"
-                                    radius: 12
-                                    border.color: "#3B3B3B"
-                                    border.width: 1
-                                    
-                                    Column {
-                                        anchors.fill: parent
-                                        anchors.margins: 25
-                                        spacing: 20
-                                        
-                                        Row {
-                                            spacing: 12
-                                            Text { text: "💻"; font.pixelSize: 24 }
-                                            Text { text: "Configuration système"; font.pixelSize: 20; font.bold: true; color: "#FFFFFF" }
-                                        }
-                                        
-                                        ScrollView {
-                                            id: systemScrollView
-                                            width: parent.width
-                                            height: 520
-                                            clip: true
-                                            
-                                            Flow {
-                                                id: systemFlow
-                                                width: systemScrollView.width - 20
-                                                spacing: 20
-                                                
-                                                // OS
-                                                Rectangle {
-                                                    width: 380
-                                                    height: 120
-                                                    color: "#252525"
-                                                    radius: 10
-                                                    
-                                                    Column {
-                                                        anchors.fill: parent
-                                                        anchors.margins: 15
-                                                        spacing: 10
-                                                        
-                                                        Row {
-                                                            spacing: 10
-                                                            
-                                                            Rectangle {
-                                                                width: 45
-                                                                height: 45
-                                                                radius: 8
-                                                                color: "#2596be"
-                                                                Text { text: "🖥️"; font.pixelSize: 24; anchors.centerIn: parent }
-                                                            }
-                                                            
-                                                            Column {
-                                                                spacing: 3
-                                                                
-                                                                Text { text: "Système"; font.pixelSize: 10; color: "#888888" }
-                                                                Text {
-                                                                    property var sysInfo: app.getSystemInfo()
-                                                                    text: (sysInfo.os ? sysInfo.os.system + " " + sysInfo.os.release : "N/A")
-                                                                    font.pixelSize: 13
-                                                                    font.bold: true
-                                                                    color: "#FFFFFF"
-                                                                }
-                                                            }
-                                                        }
-                                                        
-                                                        Text {
-                                                            property var sysInfo: app.getSystemInfo()
-                                                            text: (sysInfo.os ? sysInfo.os.version : "")
-                                                            font.pixelSize: 9
-                                                            color: "#666666"
-                                                            wrapMode: Text.WordWrap
-                                                            width: parent.width
-                                                            maximumLineCount: 2
-                                                            elide: Text.ElideRight
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                // CPU
-                                                Rectangle {
-                                                    width: 380
-                                                    height: 120
-                                                    color: "#252525"
-                                                    radius: 10
-                                                    
-                                                    Column {
-                                                        anchors.fill: parent
-                                                        anchors.margins: 15
-                                                        spacing: 10
-                                                        
-                                                        Row {
-                                                            spacing: 10
-                                                            
-                                                            Rectangle {
-                                                                width: 45
-                                                                height: 45
-                                                                radius: 8
-                                                                color: "#2596be"
-                                                                Text { text: "🧠"; font.pixelSize: 24; anchors.centerIn: parent }
-                                                            }
-                                                            
-                                                            Column {
-                                                                spacing: 3
-                                                                
-                                                                Text { text: "Processeur"; font.pixelSize: 10; color: "#888888" }
-                                                                Text {
-                                                                    property var sysInfo: app.getSystemInfo()
-                                                                    text: (sysInfo.cpu ? sysInfo.cpu.name : "N/A")
-                                                                    font.pixelSize: 13
-                                                                    font.bold: true
-                                                                    color: "#FFFFFF"
-                                                                    wrapMode: Text.WordWrap
-                                                                    width: 150
-                                                                    maximumLineCount: 2
-                                                                    elide: Text.ElideRight
-                                                                }
-                                                            }
-                                                        }
-                                                        
-                                                        Text {
-                                                            property var sysInfo: app.getSystemInfo()
-                                                            text: (sysInfo.cpu ? sysInfo.cpu.physical_cores + " coeurs / " + sysInfo.cpu.logical_cores + " threads" : "")
-                                                            font.pixelSize: 9
-                                                            color: "#666666"
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                // RAM
-                                                Rectangle {
-                                                    width: 380
-                                                    height: 120
-                                                    color: "#252525"
-                                                    radius: 10
-                                                    
-                                                    Column {
-                                                        anchors.fill: parent
-                                                        anchors.margins: 15
-                                                        spacing: 10
-                                                        
-                                                        Row {
-                                                            spacing: 10
-                                                            
-                                                            Rectangle {
-                                                                width: 45
-                                                                height: 45
-                                                                radius: 8
-                                                                color: "#2596be"
-                                                                Text { text: "💾"; font.pixelSize: 24; anchors.centerIn: parent }
-                                                            }
-                                                            
-                                                            Column {
-                                                                spacing: 3
-                                                                
-                                                                Text { text: "Mémoire RAM"; font.pixelSize: 10; color: "#888888" }
-                                                                Text {
-                                                                    property var sysInfo: app.getSystemInfo()
-                                                                    text: (sysInfo.ram ? sysInfo.ram.total : "N/A")
-                                                                    font.pixelSize: 13
-                                                                    font.bold: true
-                                                                    color: "#FFFFFF"
-                                                                }
-                                                            }
-                                                        }
-                                                        
-                                                        Text {
-                                                            property var sysInfo: app.getSystemInfo()
-                                                            text: (sysInfo.ram ? sysInfo.ram.type : "")
-                                                            font.pixelSize: 9
-                                                            color: "#666666"
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                // GPUs (iGPU + dédié)
-                                                Repeater {
-                                                    model: {
-                                                        var sysInfo = app.getSystemInfo()
-                                                        return sysInfo.gpus || []
-                                                    }
-                                                    
-                                                    Rectangle {
-                                                        width: 380
-                                                        height: 120
-                                                        color: "#252525"
-                                                        radius: 10
-                                                        
-                                                        Column {
-                                                            anchors.fill: parent
-                                                            anchors.margins: 15
-                                                            spacing: 10
-                                                            
-                                                            Row {
-                                                                spacing: 10
-                                                                
-                                                                Rectangle {
-                                                                    width: 45
-                                                                    height: 45
-                                                                    radius: 8
-                                                                    color: "#2596be"
-                                                                    Text { text: "⚙️"; font.pixelSize: 24; anchors.centerIn: parent }
-                                                                }
-                                                                
-                                                                Column {
-                                                                    spacing: 3
-                                                                    
-                                                                    Text { 
-                                                                        text: {
-                                                                            var sysInfo = app.getSystemInfo()
-                                                                            var gpus = sysInfo.gpus || []
-                                                                            return index === 0 ? "GPU Principal" : "GPU Secondaire"
-                                                                        }
-                                                                        font.pixelSize: 10
-                                                                        color: "#888888"
-                                                                    }
-                                                                    Text {
-                                                                        text: modelData.name || "Non détecté"
-                                                                        font.pixelSize: 13
-                                                                        font.bold: true
-                                                                        color: "#FFFFFF"
-                                                                        wrapMode: Text.WordWrap
-                                                                        width: 260
-                                                                        maximumLineCount: 2
-                                                                        elide: Text.ElideRight
-                                                                    }
-                                                                }
-                                                            }
-                                                            
-                                                            Text {
-                                                                text: (modelData.driver ? "Driver: " + modelData.driver : "") + (modelData.memory && modelData.memory !== "N/A" ? " | VRAM: " + modelData.memory : "")
-                                                                font.pixelSize: 9
-                                                                color: "#666666"
-                                                                elide: Text.ElideRight
-                                                                width: parent.width
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                // Python
-                                                Rectangle {
-                                                    width: 380
-                                                    height: 120
-                                                    color: "#252525"
-                                                    radius: 10
-                                                    
-                                                    Column {
-                                                        anchors.fill: parent
-                                                        anchors.margins: 15
-                                                        spacing: 10
-                                                        
-                                                        Row {
-                                                            spacing: 10
-                                                            
-                                                            Rectangle {
-                                                                width: 45
-                                                                height: 45
-                                                                radius: 8
-                                                                color: "#2596be"
-                                                                Text { text: "🐍"; font.pixelSize: 24; anchors.centerIn: parent }
-                                                            }
-                                                            
-                                                            Column {
-                                                                spacing: 3
-                                                                
-                                                                Text { text: "Python Runtime"; font.pixelSize: 10; color: "#888888" }
-                                                                Text {
-                                                                    property var sysInfo: app.getSystemInfo()
-                                                                    text: (sysInfo.python ? sysInfo.python.implementation : "N/A")
-                                                                    font.pixelSize: 13
-                                                                    font.bold: true
-                                                                    color: "#FFFFFF"
-                                                                }
-                                                            }
-                                                        }
-                                                        
-                                                        Text {
-                                                            property var sysInfo: app.getSystemInfo()
-                                                            text: (sysInfo.python ? "Version " + sysInfo.python.version : "")
-                                                            font.pixelSize: 9
-                                                            color: "#666666"
-                                                        }
-                                                    }
-                                                }
-                                                
-                                                // Disques
-                                                Repeater {
-                                                    model: {
-                                                        var sysInfo = app.getSystemInfo()
-                                                        return sysInfo.disks || []
-                                                    }
-                                                    
-                                                    Rectangle {
-                                                        width: 380
-                                                        height: 120
-                                                        color: "#252525"
-                                                        radius: 10
-                                                        
-                                                        Column {
-                                                            anchors.fill: parent
-                                                            anchors.margins: 15
-                                                            spacing: 10
-                                                            
-                                                            Row {
-                                                                spacing: 10
-                                                                
-                                                                Rectangle {
-                                                                    width: 45
-                                                                    height: 45
-                                                                    radius: 8
-                                                                    color: "#2596be"
-                                                                    Text { text: "💿"; font.pixelSize: 24; anchors.centerIn: parent }
-                                                                }
-                                                                
-                                                                Column {
-                                                                    spacing: 3
-                                                                    
-                                                                    Text { text: "Disque " + modelData.mountpoint; font.pixelSize: 10; color: "#888888"; elide: Text.ElideRight; width: 150 }
-                                                                    Text {
-                                                                        text: modelData.total || "N/A"
-                                                                        font.pixelSize: 13
-                                                                        font.bold: true
-                                                                        color: "#FFFFFF"
-                                                                    }
-                                                                }
-                                                            }
-                                                            
-                                                            Text {
-                                                                text: (modelData.type || "HDD") + " - " + (modelData.free || "N/A") + " libre"
-                                                                font.pixelSize: 9
-                                                                color: "#666666"
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                // Graphiques de performance en temps réel
-                                Text {
-                                    text: "📊 Monitoring en temps réel"
-                                    font.pixelSize: 18
-                                    font.bold: true
-                                    color: "#FFFFFF"
-                                }
-                                
-                                Row {
-                                    width: parent.width
-                                    spacing: 20
-                                    
-                                    // Timer pour rafraîchir les données
-                                    Timer {
-                                        interval: 1000
-                                        running: currentTab === 3
-                                        repeat: true
-                                        onTriggered: {
-                                            // Force refresh des graphiques
-                                            cpuChart.historyData = null
-                                            ramChart.historyData = null
-                                            gpuChart.historyData = null
-                                            
-                                            var history = app.getPerformanceHistory()
-                                            if (history.length > 0) {
-                                                cpuChart.historyData = history[0].cpu
-                                                ramChart.historyData = history[0].ram
-                                                gpuChart.historyData = history[0].gpu
-                                            }
-                                        }
-                                    }
-                                    
-                                    // Graphique CPU
-                                    PerformanceChart {
-                                        id: cpuChart
-                                        width: (parent.width - 40) / 3
-                                        height: 200
-                                        title: "CPU"
-                                    }
-                                    
-                                    // Graphique RAM
-                                    PerformanceChart {
-                                        id: ramChart
-                                        width: (parent.width - 40) / 3
-                                        height: 200
-                                        title: "RAM"
-                                    }
-                                    
-                                    // Graphique GPU
-                                    PerformanceChart {
-                                        id: gpuChart
-                                        width: (parent.width - 40) / 3
-                                        height: 200
-                                        title: "GPU"
-                                    }
-                                }
-                            }
-                                                
-                            // Backups
-                            Column {
-                                visible: currentTab === 4
-                                width: parent.width
-                                spacing: 20
-                                
-                                Row {
-                                    width: parent.width
-                                    spacing: 20
-                                    
-                                    Text {
-                                        text: "Sauvegardes disponibles"
-                                        font.pixelSize: 18
-                                        font.bold: true
-                                        color: "#FFFFFF"
-                                    }
-                                    
-                                    Item { Layout.fillWidth: true }
-                                    
-                                    Button {
-                                        text: "➕ Nouvelle sauvegarde"
-                                        height: 40
-                                        
-                                        background: Rectangle {
-                                            color: parent.hovered ? "#1e7da0" : "#2596be"
-                                            radius: 8
-                                        }
-                                        
-                                        contentItem: Text {
-                                            text: parent.text
-                                            font.pixelSize: 13
-                                            font.bold: true
-                                            color: "#FFFFFF"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                            leftPadding: 15
-                                            rightPadding: 15
-                                        }
-                                        
-                                        onClicked: app.createBackup()
-                                    }
-                                }
-                                
-                                ListView {
-                                    width: parent.width
-                                    height: 400
-                                    clip: true
-                                    spacing: 10
-                                    model: app.listBackups()
-                                    
-                                    delegate: Rectangle {
-                                        width: parent.width
-                                        height: 80
-                                        color: "#1E1E1E"
-                                        radius: 12
-                                        border.color: "#3B3B3B"
-                                        border.width: 1
-                                        
-                                        Row {
-                                            anchors.fill: parent
-                                            anchors.margins: 20
-                                            spacing: 20
-                                            
-                                            Text {
-                                                text: "💾"
-                                                font.pixelSize: 32
-                                                anchors.verticalCenter: parent.verticalCenter
-                                            }
-                                            
-                                            Column {
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                spacing: 5
-                                                
-                                                Text {
-                                                    text: modelData.name || ""
-                                                    font.pixelSize: 14
-                                                    font.bold: true
-                                                    color: "#FFFFFF"
-                                                }
-                                                
-                                                Text {
-                                                    text: new Date(modelData.date * 1000).toLocaleString()
-                                                    font.pixelSize: 12
-                                                    color: "#888888"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            // RGPD
-                            Column {
-                                visible: currentTab === 5
-                                width: parent.width
-                                spacing: 25
-                                
-                                Text {
-                                    text: "🔒 Conformité RGPD"
-                                    font.pixelSize: 24
-                                    font.bold: true
-                                    color: "#FFFFFF"
-                                }
-                                
-                                // Résumé RGPD
-                                Rectangle {
-                                    width: parent.width
-                                    height: 150
-                                    color: "#1E1E1E"
-                                    radius: 12
-                                    border.color: "#3B3B3B"
-                                    border.width: 1
-                                    
-                                    Row {
-                                        anchors.fill: parent
-                                        anchors.margins: 30
-                                        spacing: 40
-                                        
-                                        Column {
-                                            spacing: 10
-                                            
-                                            Text {
-                                                text: "🗄️ Données personnelles"
-                                                font.pixelSize: 16
-                                                color: "#888888"
-                                            }
-                                            
-                                            Text {
-                                                text: {
-                                                    var stats = app.getAppStats()
-                                                    return (stats.clients + stats.profiles + stats.adversaires) + " enregistrements"
-                                                }
-                                                font.pixelSize: 28
-                                                font.bold: true
-                                                color: "#FFFFFF"
-                                            }
-                                        }
-                                        
-                                        Column {
-                                            spacing: 10
-                                            
-                                            Text {
-                                                text: "🔐 Chiffrement"
-                                                font.pixelSize: 16
-                                                color: "#888888"
-                                            }
-                                            
-                                            Text {
-                                                text: "AES-256-GCM"
-                                                font.pixelSize: 28
-                                                font.bold: true
-                                                color: "#FFFFFF"
-                                            }
-                                        }
-                                        
-                                        Column {
-                                            spacing: 10
-                                            
-                                            Text {
-                                                text: "📅 Dernier audit"
-                                                font.pixelSize: 16
-                                                color: "#888888"
-                                            }
-                                            
-                                            Text {
-                                                text: new Date().toLocaleDateString()
-                                                font.pixelSize: 28
-                                                font.bold: true
-                                                color: "#FFFFFF"
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                // Principes RGPD
-                                Grid {
-                                    width: parent.width
-                                    columns: 2
-                                    spacing: 20
-                                    
-                                    Repeater {
-                                        model: [
-                                            {icon: "✅", title: "Licéité du traitement", desc: "Traitement des données avec consentement"},
-                                            {icon: "🎯", title: "Limitation des finalités", desc: "Données collectées pour des fins spécifiques"},
-                                            {icon: "📊", title: "Minimisation", desc: "Seules les données nécessaires sont collectées"},
-                                            {icon: "✔️", title: "Exactitude", desc: "Données maintenues à jour et exactes"},
-                                            {icon: "⏱️", title: "Conservation limitée", desc: "Données conservées le temps nécessaire"},
-                                            {icon: "🔒", title: "Sécurité", desc: "Protection par chiffrement AES-256-GCM"}
-                                        ]
-                                        
-                                        Rectangle {
-                                            width: (parent.width - 20) / 2
-                                            height: 120
-                                            color: "#1E1E1E"
-                                            radius: 12
-                                            border.color: "#3B3B3B"
-                                            border.width: 1
-                                            
-                                            Row {
-                                                anchors.fill: parent
-                                                anchors.margins: 20
-                                                spacing: 15
-                                                
-                                                Text {
-                                                    text: modelData.icon
-                                                    font.pixelSize: 32
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                }
-                                                
-                                                Column {
-                                                    anchors.verticalCenter: parent.verticalCenter
-                                                    spacing: 8
-                                                    width: parent.width - 60
-                                                    
-                                                    Text {
-                                                        text: modelData.title
-                                                        font.pixelSize: 14
-                                                        font.bold: true
-                                                        color: "#FFFFFF"
-                                                        wrapMode: Text.WordWrap
-                                                        width: parent.width
-                                                    }
-                                                    
-                                                    Text {
-                                                        text: modelData.desc
-                                                        font.pixelSize: 12
-                                                        color: "#888888"
-                                                        wrapMode: Text.WordWrap
-                                                        width: parent.width
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                // Actions RGPD
-                                Row {
-                                    width: parent.width
-                                    spacing: 15
-                                    
-                                    Button {
-                                        height: 50
-                                        
-                                        background: Rectangle {
-                                            color: parent.hovered ? "#1e7da0" : "#2596be"
-                                            radius: 8
-                                        }
-                                        
-                                        contentItem: Text {
-                                            text: "📄 Exporter mes données"
-                                            font.pixelSize: 13
-                                            font.bold: true
-                                            color: "#FFFFFF"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                            leftPadding: 15
-                                            rightPadding: 15
-                                        }
-                                        
-                                        onClicked: console.log("Export RGPD")
-                                    }
-                                    
-                                    Button {
-                                        height: 50
-                                        
-                                        background: Rectangle {
-                                            color: parent.hovered ? "#c0392b" : "#e74c3c"
-                                            radius: 8
-                                        }
-                                        
-                                        contentItem: Text {
-                                            text: "🗑️ Supprimer toutes mes données"
-                                            font.pixelSize: 13
-                                            font.bold: true
-                                            color: "#FFFFFF"
-                                            horizontalAlignment: Text.AlignHCenter
-                                            verticalAlignment: Text.AlignVCenter
-                                            leftPadding: 15
-                                            rightPadding: 15
-                                        }
-                                        
-                                        onClicked: console.log("Suppression RGPD")
-                                    }
-                                }
-                            }
-                            
-                            // Licences
-                            Column {
-                                visible: currentTab === 6
-                                width: parent.width
-                                spacing: 25
-                                
-                                Text {
-                                    text: "🔑 Gestion des Licences"
-                                    font.pixelSize: 24
-                                    font.bold: true
-                                    color: "#FFFFFF"
-                                }
-                                
-                                // Licence actuelle
-                                Rectangle {
-                                    width: parent.width
-                                    height: 200
-                                    color: "#1E1E1E"
-                                    radius: 12
-                                    border.color: "#3B3B3B"
-                                    border.width: 1
-                                    
-                                    Column {
-                                        anchors.fill: parent
-                                        anchors.margins: 30
-                                        spacing: 20
-                                        
-                                        Row {
-                                            width: parent.width
-                                            spacing: 15
-                                            
-                                            Text {
-                                                text: "📜"
-                                                font.pixelSize: 48
-                                            }
-                                            
-                                            Column {
-                                                spacing: 8
-                                                
-                                                Text {
-                                                    text: "Licence actuelle"
-                                                    font.pixelSize: 14
-                                                    color: "#888888"
-                                                }
-                                                
-                                                Text {
-                                                    text: {
-                                                        var info = app.getLicenseInfo()
-                                                        return info.type.toUpperCase() || "NON ACTIVÉE"
-                                                    }
-                                                    font.pixelSize: 24
-                                                    font.bold: true
-                                                    color: "#FFFFFF"
-                                                }
-                                            }
-                                        }
-                                        
-                                        Row {
-                                            width: parent.width
-                                            spacing: 40
-                                            
-                                            Column {
-                                                spacing: 5
-                                                
-                                                Text {
-                                                    text: "Expire le"
-                                                    font.pixelSize: 12
-                                                    color: "#888888"
-                                                }
-                                                
-                                                Text {
-                                                    text: {
-                                                        var info = app.getLicenseInfo()
-                                                        return info.expiry_date || "N/A"
-                                                    }
-                                                    font.pixelSize: 16
-                                                    font.bold: true
-                                                    color: "#FFFFFF"
-                                                }
-                                            }
-                                            
-                                            Column {
-                                                spacing: 5
-                                                
-                                                Text {
-                                                    text: "Jours restants"
-                                                    font.pixelSize: 12
-                                                    color: "#888888"
-                                                }
-                                                
-                                                Text {
-                                                    text: {
-                                                        var info = app.getLicenseInfo()
-                                                        return info.days_remaining !== undefined ? info.days_remaining.toString() : "0"
-                                                    }
-                                                    font.pixelSize: 16
-                                                    font.bold: true
-                                                    color: {
-                                                        var info = app.getLicenseInfo()
-                                                        if (info.days_remaining <= 0) return "#e74c3c"
-                                                        return "#FFFFFF"
-                                                    }
-                                                }
-                                            }
-                                            
-                                            Column {
-                                                spacing: 5
-                                                
-                                                Text {
-                                                    text: "Machine ID"
-                                                    font.pixelSize: 12
-                                                    color: "#888888"
-                                                }
-                                                
-                                                Text {
-                                                    text: {
-                                                        var info = app.getLicenseInfo()
-                                                        return info.machine_id || "N/A"
-                                                    }
-                                                    font.pixelSize: 11
-                                                    font.family: "Courier"
-                                                    color: "#888888"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                // Types de licences
-                                Grid {
-                                    width: parent.width
-                                    columns: 2
-                                    spacing: 20
-                                    
-                                    Repeater {
-                                        model: [
-                                            {type: "Trial", icon: "🆓", color: "#FFFFFF", features: ["15 jours", "Fonctions de base", "1 utilisateur"]},
-                                            {type: "Standard", icon: "📋", color: "#FFFFFF", features: ["Toutes les fonctions", "Support par email", "3 utilisateurs"]},
-                                            {type: "Premium", icon: "⭐", color: "#FFFFFF", features: ["Fonctions avancées", "Support prioritaire", "10 utilisateurs"]},
-                                            {type: "Enterprise", icon: "🏢", color: "#FFFFFF", features: ["Toutes les fonctions", "Support 24/7", "Utilisateurs illimités"]}
-                                        ]
-                                        
-                                        Rectangle {
-                                            width: (parent.width - 20) / 2
-                                            height: 180
-                                            color: "#1E1E1E"
-                                            radius: 12
-                                            border.color: {
-                                                var info = app.getLicenseInfo()
-                                                return info.type.toLowerCase() === modelData.type.toLowerCase() ? modelData.color : "#3B3B3B"
-                                            }
-                                            border.width: {
-                                                var info = app.getLicenseInfo()
-                                                return info.type.toLowerCase() === modelData.type.toLowerCase() ? 2 : 1
-                                            }
-                                            
-                                            Column {
-                                                anchors.fill: parent
-                                                anchors.margins: 20
-                                                spacing: 15
-                                                
-                                                Row {
-                                                    spacing: 10
-                                                    
-                                                    Text {
-                                                        text: modelData.icon
-                                                        font.pixelSize: 32
-                                                    }
-                                                    
-                                                    Text {
-                                                        text: modelData.type
-                                                        font.pixelSize: 18
-                                                        font.bold: true
-                                                        color: modelData.color
-                                                        anchors.verticalCenter: parent.verticalCenter
-                                                    }
-                                                }
-                                                
-                                                Column {
-                                                    spacing: 8
-                                                    
-                                                    Repeater {
-                                                        model: modelData.features
-                                                        
-                                                        Row {
-                                                            spacing: 8
-                                                            
-                                                            Text {
-                                                                text: "✓"
-                                                                font.pixelSize: 12
-                                                                color: "#FFFFFF"
-                                                            }
-                                                            
-                                                            Text {
-                                                                text: modelData
-                                                                font.pixelSize: 12
-                                                                color: "#888888"
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                
-                                // Actions
-                                Button {
-                                    height: 50
+                                Menu {
+                                    id: favoritesManageMenu
+                                    x: parent.width - width
+                                    y: parent.height + 5
                                     
                                     background: Rectangle {
-                                        color: parent.hovered ? "#1e7da0" : "#2596be"
+                                        implicitWidth: 200
+                                        color: "#292A2D"
+                                        border.color: "#3C4043"
                                         radius: 8
                                     }
                                     
-                                    contentItem: Text {
-                                        text: "🔑 Activer une licence"
-                                        font.pixelSize: 14
-                                        font.bold: true
-                                        color: "#FFFFFF"
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                        leftPadding: 20
-                                        rightPadding: 20
+                                    MenuItem {
+                                        text: "📁 Nouveau dossier"
+                                        height: 40
+                                        background: Rectangle { color: parent.hovered ? "#3C4043" : "transparent" }
+                                        contentItem: Text { 
+                                            text: parent.text
+                                            color: "#E8EAED"
+                                            font.pixelSize: 13
+                                            leftPadding: 10
+                                        }
+                                        onClicked: createFolderPopup.open()
                                     }
                                     
-                                    onClicked: console.log("Activation licence")
+                                    MenuItem {
+                                        text: "📋 Gérer les favoris"
+                                        height: 40
+                                        background: Rectangle { color: parent.hovered ? "#3C4043" : "transparent" }
+                                        contentItem: Text { 
+                                            text: parent.text
+                                            color: "#E8EAED"
+                                            font.pixelSize: 13
+                                            leftPadding: 10
+                                        }
+                                        onClicked: manageFavoritesPopup.open()
+                                    }
+                                }
+                            }
+                            
+                            // PROFIL avec photo
+                            Rectangle {
+                                width: 32
+                                height: 32
+                                radius: 16
+                                color: userMenuArea.containsMouse ? "#3C4043" : "#2D2E30"
+                                border.color: "#555"
+                                border.width: 1
+                                
+                                Canvas {
+                                    id: profileCanvas
+                                    anchors.fill: parent
+                                    visible: userProfilePopup.profileImagePath !== ""
+                                    
+                                    property var loadedImage: null
+                                    
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.save()
+                                        ctx.clearRect(0, 0, width, height)
+                                        
+                                        // Clip circulaire
+                                        ctx.beginPath()
+                                        ctx.arc(width/2, height/2, width/2, 0, Math.PI * 2)
+                                        ctx.clip()
+                                        
+                                        if (loadedImage && loadedImage.status === Image.Ready) {
+                                            ctx.drawImage(loadedImage, 0, 0, width, height)
+                                        }
+                                        
+                                        ctx.restore()
+                                    }
+                                    
+                                    Image {
+                                        id: profileImageSmall
+                                        source: userProfilePopup.profileImagePath
+                                        visible: false
+                                        onStatusChanged: {
+                                            if (status === Image.Ready) {
+                                                profileCanvas.loadedImage = profileImageSmall
+                                                profileCanvas.requestPaint()
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                Text {
+                                    text: window.currentUser.substring(0, 1).toUpperCase()
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    color: "#E8EAED"
+                                    anchors.centerIn: parent
+                                    visible: userProfilePopup.profileImagePath === ""
+                                }
+                                
+                                MouseArea {
+                                    id: userMenuArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: userMenu.open()
+                                }
+                                
+                                Menu {
+                                    id: userMenu
+                                    x: parent.width - width
+                                    y: parent.height + 5
+                                    
+                                    background: Rectangle {
+                                        implicitWidth: 200
+                                        color: "#292A2D"
+                                        border.color: "#3C4043"
+                                        radius: 8
+                                    }
+                                    
+                                    MenuItem {
+                                        text: "👤 Voir profil"
+                                        height: 40
+                                        width: parent.width
+                                        background: Rectangle {
+                                            color: parent.hovered ? "#3C4043" : "transparent"
+                                            radius: 4
+                                        }
+                                        contentItem: Text {
+                                            text: parent.text
+                                            color: "#E8EAED"
+                                            font.pixelSize: 13
+                                            leftPadding: 10
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        onClicked: userProfilePopup.open()
+                                    }
+                                    
+                                    MenuItem {
+                                        text: "🔄 Changer utilisateur"
+                                        height: 40
+                                        width: parent.width
+                                        background: Rectangle {
+                                            color: parent.hovered ? "#3C4043" : "transparent"
+                                            radius: 4
+                                        }
+                                        contentItem: Text {
+                                            text: parent.text
+                                            color: "#E8EAED"
+                                            font.pixelSize: 13
+                                            leftPadding: 10
+                                            verticalAlignment: Text.AlignVCenter
+                                        }
+                                        onClicked: {
+                                            window.vaultOpen = false
+                                            window.currentUser = ""
+                                            window.isEngineerMode = false
+                                            window.openTabs = []
+                                            window.activeTabIndex = -1
+                                            mainStack.replace(loginPage)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // BARRE FAVORIS
+                Rectangle {
+                    width: parent.width
+                    height: 36
+                    color: "#313235"
+                    
+                    Row {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 70
+                        spacing: 4
+                        
+                        Repeater {
+                            model: window.favoritePages
+                            
+                            Rectangle {
+                                id: favItem
+                                height: 28
+                                width: favContent.width + 16
+                                radius: 6
+                                color: {
+                                    if (dropArea.containsDrag && modelData.isFolder) {
+                                        return "#FFA500"  // Orange si survol dossier pendant drag
+                                    }
+                                    return favMouse.containsMouse ? "#5F6368" : "transparent"
+                                }
+                                anchors.verticalCenter: parent ? parent.verticalCenter : undefined
+                                
+                                property int visualIndex: index
+                                property var appRef: appInstance
+                                property var favsRef: favoritePages
+                                
+                                // Drag & Drop
+                                Drag.active: favDragHandler.drag.active
+                                Drag.source: favItem
+                                Drag.hotSpot.x: width / 2
+                                Drag.hotSpot.y: height / 2
+                                
+                                states: State {
+                                    when: favDragHandler.drag.active
+                                    ParentChange { target: favItem; parent: window.contentItem }
+                                    AnchorChanges { 
+                                        target: favItem
+                                        anchors.verticalCenter: undefined
+                                    }
+                                }
+                                
+                                // Zone de drop
+                                DropArea {
+                                    id: dropArea
+                                    anchors.fill: parent
+                                    
+                                    onDropped: function(drop) {
+                                        if (drop.source !== favItem) {
+                                            var sourceIndex = drop.source.visualIndex
+                                            var targetIndex = favItem.visualIndex
+                                            
+                                            if (sourceIndex !== targetIndex) {
+                                                var newFavs = favItem.favsRef.slice()
+                                                var draggedItem = newFavs[sourceIndex]
+                                                
+                                                // Si la cible est un dossier et l'élément n'est pas un dossier
+                                                if (modelData.isFolder && !draggedItem.isFolder) {
+                                                    // Ajouter dans le dossier
+                                                    if (!newFavs[targetIndex].children) {
+                                                        newFavs[targetIndex].children = []
+                                                    }
+                                                    newFavs[targetIndex].children.push(draggedItem)
+                                                    newFavs.splice(sourceIndex, 1)
+                                                } else if (!modelData.isFolder) {
+                                                    // Réorganiser normalement (uniquement si cible n'est PAS un dossier)
+                                                    var item = newFavs.splice(sourceIndex, 1)[0]
+                                                    newFavs.splice(targetIndex, 0, item)
+                                                }
+                                                
+                                                favoritePages = newFavs
+                                                
+                                                // Sauvegarder via Python
+                                                favItem.appRef.saveFavorites(JSON.stringify(newFavs))
+                                            }
+                                            drop.accept()
+                                        }
+                                    }
+                                }
+                                
+                                Row {
+                                    id: favContent
+                                    anchors.centerIn: parent
+                                    spacing: 6
+                                    
+                                    Text {
+                                        text: modelData.icon
+                                        font.pixelSize: 12
+                                    }
+                                    
+                                    Text {
+                                        text: modelData.name
+                                        color: "#E8EAED"
+                                        font.pixelSize: 12
+                                    }
+                                    
+                                    Text {
+                                        text: modelData.isFolder ? "▼" : ""
+                                        color: "#9AA0A6"
+                                        font.pixelSize: 8
+                                        visible: modelData.isFolder
+                                    }
+                                }
+                                
+                                // Drag handler
+                                MouseArea {
+                                    id: favDragHandler
+                                    anchors.fill: parent
+                                    drag.target: favItem
+                                    drag.threshold: 10
+                                    cursorShape: pressed ? Qt.ClosedHandCursor : Qt.ArrowCursor
+                                    hoverEnabled: false
+                                    z: -1
+                                    
+                                    onReleased: {
+                                        favItem.Drag.drop()
+                                        favItem.x = 0
+                                        favItem.y = 0
+                                    }
+                                }
+                                
+                                // Click handler (superposé)
+                                MouseArea {
+                                    id: favMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                    propagateComposedEvents: true
+                                    
+                                    onPressed: function(mouse) {
+                                        // Propager pour permettre le drag
+                                        mouse.accepted = false
+                                    }
+                                    
+                                    onClicked: function(mouse) {
+                                        console.log("Favori cliqué:", modelData.name, "isFolder:", modelData.isFolder)
+                                        
+                                        if (mouse.button === Qt.RightButton) {
+                                            favContextMenu.selectedIndex = index
+                                            favContextMenu.popup()
+                                        } else if (!favDragHandler.drag.active) {
+                                            if (modelData.isFolder) {
+                                                console.log("Ouverture menu dossier, children:", modelData.children ? modelData.children.length : 0)
+                                                folderMenu.popup()
+                                            } else if (modelData.type === "menu") {
+                                                navigateToMenu()
+                                            } else {
+                                                navigateToInterface(modelData.type, modelData.name)
+                                            }
+                                        }
+                                    }
+                                }
+                                
+                                Menu {
+                                    id: folderMenu
+                                    
+                                    background: Rectangle {
+                                        implicitWidth: 180
+                                        color: "#292A2D"
+                                        border.color: "#3C4043"
+                                        radius: 6
+                                    }
+                                    
+                                    Repeater {
+                                        model: modelData.isFolder && modelData.children ? modelData.children : []
+                                        
+                                        delegate: MenuItem {
+                                            required property var modelData
+                                            
+                                            text: modelData.icon + " " + modelData.name
+                                            height: 32
+                                            background: Rectangle {
+                                                color: parent.hovered ? "#3C4043" : "transparent"
+                                            }
+                                            contentItem: Text {
+                                                text: parent.text
+                                                color: "#E8EAED"
+                                                font.pixelSize: 12
+                                                leftPadding: 8
+                                            }
+                                            onClicked: navigateToInterface(modelData.type, modelData.name)
+                                        }
+                                    }
+                                    
+                                    // Message si vide
+                                    MenuItem {
+                                        text: "📂 Dossier vide"
+                                        height: 32
+                                        visible: !modelData.children || modelData.children.length === 0
+                                        enabled: false
+                                        background: Rectangle {
+                                            color: "transparent"
+                                        }
+                                        contentItem: Text {
+                                            text: parent.text
+                                            color: "#666666"
+                                            font.pixelSize: 12
+                                            font.italic: true
+                                            leftPadding: 8
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Menu {
+                            id: favContextMenu
+                            property int selectedIndex: -1
+                            
+                            background: Rectangle {
+                                implicitWidth: 180
+                                color: "#292A2D"
+                                border.color: "#3C4043"
+                                radius: 6
+                            }
+                            
+                            MenuItem {
+                                text: "✏️ Renommer"
+                                height: 32
+                                background: Rectangle { color: parent.hovered ? "#3C4043" : "transparent" }
+                                contentItem: Text { 
+                                    text: parent.text
+                                    color: "#E8EAED"
+                                    font.pixelSize: 12
+                                    leftPadding: 8
+                                }
+                                onClicked: {
+                                    if (favContextMenu.selectedIndex >= 0) {
+                                        renameFavoritePopup.editingIndex = favContextMenu.selectedIndex
+                                        renameField.text = window.favoritePages[favContextMenu.selectedIndex].name
+                                        renameFavoritePopup.open()
+                                    }
+                                }
+                            }
+                            
+                            MenuItem {
+                                text: "📁 Nouveau sous-dossier"
+                                height: 32
+                                visible: favContextMenu.selectedIndex >= 0 && window.favoritePages[favContextMenu.selectedIndex] && window.favoritePages[favContextMenu.selectedIndex].isFolder
+                                background: Rectangle { color: parent.hovered ? "#3C4043" : "transparent" }
+                                contentItem: Text { 
+                                    text: parent.text
+                                    color: "#E8EAED"
+                                    font.pixelSize: 12
+                                    leftPadding: 8
+                                }
+                                onClicked: {
+                                    if (favContextMenu.selectedIndex >= 0) {
+                                        var newFavs = window.favoritePages.slice()
+                                        var parentFolder = newFavs[favContextMenu.selectedIndex]
+                                        
+                                        if (parentFolder.isFolder) {
+                                            if (!parentFolder.children) {
+                                                parentFolder.children = []
+                                            }
+                                            
+                                            var subFolderName = "Sous-dossier " + (parentFolder.children.length + 1)
+                                            parentFolder.children.push({
+                                                name: subFolderName,
+                                                icon: "📁",
+                                                type: "folder",
+                                                isFolder: true,
+                                                children: []
+                                            })
+                                            
+                                            window.favoritePages = newFavs
+                                            window.saveFavoritesToVault()
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            MenuItem {
+                                text: "⬅️ Déplacer à gauche"
+                                height: 32
+                                visible: favContextMenu.selectedIndex > 0
+                                background: Rectangle { color: parent.hovered ? "#3C4043" : "transparent" }
+                                contentItem: Text { 
+                                    text: parent.text
+                                    color: "#E8EAED"
+                                    font.pixelSize: 12
+                                    leftPadding: 8
+                                }
+                                onClicked: {
+                                    if (favContextMenu.selectedIndex > 0) {
+                                        var newFavs = window.favoritePages.slice()
+                                        var item = newFavs[favContextMenu.selectedIndex]
+                                        newFavs[favContextMenu.selectedIndex] = newFavs[favContextMenu.selectedIndex - 1]
+                                        newFavs[favContextMenu.selectedIndex - 1] = item
+                                        window.favoritePages = newFavs
+                                        window.saveFavoritesToVault()
+                                    }
+                                }
+                            }
+                            
+                            MenuItem {
+                                text: "➡️ Déplacer à droite"
+                                height: 32
+                                visible: favContextMenu.selectedIndex >= 0 && favContextMenu.selectedIndex < window.favoritePages.length - 1
+                                background: Rectangle { color: parent.hovered ? "#3C4043" : "transparent" }
+                                contentItem: Text { 
+                                    text: parent.text
+                                    color: "#E8EAED"
+                                    font.pixelSize: 12
+                                    leftPadding: 8
+                                }
+                                onClicked: {
+                                    if (favContextMenu.selectedIndex < window.favoritePages.length - 1) {
+                                        var newFavs = window.favoritePages.slice()
+                                        var item = newFavs[favContextMenu.selectedIndex]
+                                        newFavs[favContextMenu.selectedIndex] = newFavs[favContextMenu.selectedIndex + 1]
+                                        newFavs[favContextMenu.selectedIndex + 1] = item
+                                        window.favoritePages = newFavs
+                                        window.saveFavoritesToVault()
+                                    }
+                                }
+                            }
+                            
+                            MenuItem {
+                                text: "🗑️ Supprimer"
+                                height: 32
+                                background: Rectangle { color: parent.hovered ? "#3C4043" : "transparent" }
+                                contentItem: Text { 
+                                    text: parent.text
+                                    color: "#FF6B6B"
+                                    font.pixelSize: 12
+                                    leftPadding: 8
+                                }
+                                onClicked: {
+                                    if (favContextMenu.selectedIndex >= 0) {
+                                        var newFavs = window.favoritePages.slice()
+                                        newFavs.splice(favContextMenu.selectedIndex, 1)
+                                        window.favoritePages = newFavs
+                                        window.saveFavoritesToVault()
+                                    }
+                                }
+                            }
+                        }
+                        
+                    }
+                    
+                    // Bouton Historique (positionné à droite)
+                    Rectangle {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.rightMargin: 10
+                        width: 50
+                        height: 28
+                        radius: 6
+                        color: historyMouse.containsMouse ? "#5F6368" : "transparent"
+                        
+                        Text {
+                            text: "📜"
+                            font.pixelSize: 16
+                            anchors.centerIn: parent
+                        }
+                        
+                        MouseArea {
+                            id: historyMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: historyMenu.open()
+                        }
+                        
+                        Menu {
+                            id: historyMenu
+                            x: parent.width - width
+                            y: parent.height + 5
+                            
+                            background: Rectangle {
+                                implicitWidth: 300
+                                color: "#292A2D"
+                                border.color: "#3C4043"
+                                radius: 8
+                            }
+                            
+                            MenuItem {
+                                text: "📜 Historique de navigation"
+                                height: 35
+                                enabled: false
+                                background: Rectangle { color: "#202124" }
+                                contentItem: Text {
+                                    text: parent.text
+                                    color: "#E8EAED"
+                                    font.pixelSize: 13
+                                    font.bold: true
+                                    leftPadding: 10
+                                }
+                            }
+                            
+                            MenuSeparator {
+                                padding: 0
+                                topPadding: 2
+                                bottomPadding: 2
+                                contentItem: Rectangle {
+                                    implicitWidth: 300
+                                    implicitHeight: 1
+                                    color: "#3C4043"
+                                }
+                            }
+                            
+                            MenuItem {
+                                text: "🔍 Exporter l'historique"
+                                height: 32
+                                background: Rectangle { color: parent.hovered ? "#3C4043" : "transparent" }
+                                contentItem: Text {
+                                    text: parent.text
+                                    color: "#E8EAED"
+                                    font.pixelSize: 12
+                                    leftPadding: 10
+                                }
+                                onClicked: {
+                                    console.log("Export historique")
+                                    // TODO: Implémenter export
+                                }
+                            }
+                            
+                            MenuItem {
+                                text: "🗑️ Effacer l'historique"
+                                height: 32
+                                background: Rectangle { color: parent.hovered ? "#3C4043" : "transparent" }
+                                contentItem: Text {
+                                    text: parent.text
+                                    color: "#FF6B6B"
+                                    font.pixelSize: 12
+                                    leftPadding: 10
+                                }
+                                onClicked: {
+                                    console.log("Effacer historique")
+                                    // TODO: Implémenter clear history
+                                }
+                            }
+                            
+                            MenuSeparator {
+                                padding: 0
+                                topPadding: 2
+                                bottomPadding: 2
+                                contentItem: Rectangle {
+                                    implicitWidth: 300
+                                    implicitHeight: 1
+                                    color: "#3C4043"
+                                }
+                            }
+                            
+                            MenuItem {
+                                text: "📄 Historique vide"
+                                height: 32
+                                enabled: false
+                                background: Rectangle { color: "transparent" }
+                                contentItem: Text {
+                                    text: parent.text
+                                    color: "#666666"
+                                    font.pixelSize: 12
+                                    font.italic: true
+                                    leftPadding: 10
+                                }
+                                // TODO: Remplacer par Repeater avec historique réel
+                            }
+                        }
+                    }
+                }
+                
+                // CONTENU
+                Rectangle {
+                    width: parent.width
+                    height: parent.height - 118
+                    color: "#0A0A0A"
+                    
+                    ScrollView {
+                        anchors.fill: parent
+                        clip: true
+                        
+                        ScrollBar.vertical: ScrollBar {
+                            policy: ScrollBar.AlwaysOn
+                            width: 12
+                            
+                            contentItem: Rectangle {
+                                implicitWidth: 12
+                                radius: 6
+                                color: parent.pressed ? "#888888" : (parent.hovered ? "#666666" : "#444444")
+                            }
+                            
+                            background: Rectangle {
+                                implicitWidth: 12
+                                color: "#1A1A1A"
+                            }
+                        }
+                    
+                        Loader {
+                            id: contentLoader
+                            width: parent.width
+                            height: item ? item.implicitHeight : parent.height
+                            
+                            function reloadContent() {
+                                if (window.openTabs.length > 0 && window.activeTabIndex >= 0 && window.activeTabIndex < window.openTabs.length) {
+                                    var tab = window.openTabs[window.activeTabIndex]
+                                    
+                                    if (tab.type === "menu") {
+                                        contentLoader.sourceComponent = menuPrincipal
+                                        contentLoader.source = ""
+                                    } else if (tab.source) {
+                                        contentLoader.sourceComponent = null
+                                        contentLoader.source = tab.source
+                                    } else {
+                                        contentLoader.sourceComponent = null
+                                        contentLoader.source = ""
+                                    }
+                                } else {
+                                    contentLoader.sourceComponent = null
+                                    contentLoader.source = ""
+                                }
+                            }
+                            
+                            Component.onCompleted: reloadContent()
+                            
+                            Connections {
+                                target: window
+                                function onTabsChanged() {
+                                    contentLoader.reloadContent()
+                                }
+                                function onActiveTabIndexChanged() {
+                                    contentLoader.reloadContent()
                                 }
                             }
                         }
@@ -1781,238 +2214,229 @@ ApplicationWindow {
         }
     }
     
-    // Profiles Page
-    Component {
-        id: profilesPage
-        ProfilesPage {
+    // FONCTIONS
+    function updateCurrentAddress() {
+        if (window.openTabs.length > 0 && window.activeTabIndex >= 0 && window.activeTabIndex < window.openTabs.length) {
+            var tab = window.openTabs[window.activeTabIndex]
+            window.currentAddress = "neosiris://" + tab.type + "/" + tab.name.replace(/ /g, "-").toLowerCase()
         }
     }
     
-    // Clients Page
-    Component {
-        id: clientsPage
-        ClientsPage {
-        }
-    }
-    
-    // Adversaires Page
-    Component {
-        id: adversairesPage
-        AdversairesPage {
-        }
-    }
-    
-    // Pièces Page
-    Component {
-        id: piecesPage
-        PiecesPage {
-        }
-    }
-    
-    // IA Page
-    Component {
-        id: iaPage
-        Rectangle {
-            color: "#0A0A0A"
-            
-            Column {
-                anchors.fill: parent
-                anchors.margins: 30
-                spacing: 20
-                
-                Text {
-                    text: "🤖 Assistant IA"
-                    font.pixelSize: 32
-                    font.bold: true
-                    color: "#FFFFFF"
-                }
-                
-                Rectangle {
-                    width: parent.width
-                    height: 400
-                    color: "#1E1E1E"
-                    radius: 12
-                    
-                    Column {
-                        anchors.fill: parent
-                        anchors.margins: 20
-                        spacing: 15
-                        
-                        TextArea {
-                            id: iaQuestion
-                            width: parent.width
-                            height: 100
-                            placeholderText: "Posez votre question juridique..."
-                            color: "#FFFFFF"
-                            
-                            background: Rectangle {
-                                color: "#2B2B2B"
-                                radius: 8
-                                border.color: "#3B3B3B"
-                            }
-                        }
-                        
-                        Button {
-                            text: "Envoyer"
-                            width: 120
-                            height: 40
-                            
-                            background: Rectangle {
-                                color: parent.hovered ? "#1e7da0" : "#2596be"
-                                radius: 8
-                            }
-                            
-                            contentItem: Text {
-                                text: parent.text
-                                font.pixelSize: 14
-                                color: "#FFFFFF"
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            
-                            onClicked: {
-                                iaResponse.text = app.askIA(iaQuestion.text)
-                            }
-                        }
-                        
-                        Text {
-                            id: iaResponse
-                            width: parent.width
-                            wrapMode: Text.WordWrap
-                            color: "#FFFFFF"
-                            font.pixelSize: 13
-                        }
-                    }
-                }
+    function navigateToAddress(address) {
+        if (address.startsWith("neosiris://")) {
+            var parts = address.replace("neosiris://", "").split("/")
+            var pageType = parts[0]
+            if (pageType === "menu") {
+                navigateToMenu()
+            } else {
+                var pageName = parts[1] ? parts[1].replace(/-/g, " ") : ""
+                navigateToInterface(pageType, pageName)
             }
         }
     }
     
-    // Base Page
-    Component {
-        id: basePage
-        Rectangle {
-            color: "#0A0A0A"
-            
-            Column {
-                anchors.fill: parent
-                anchors.margins: 30
-                spacing: 20
-                
-                Text {
-                    text: "📚 Base Juridique"
-                    font.pixelSize: 32
-                    font.bold: true
-                    color: "#FFFFFF"
-                }
-                
-                Text {
-                    text: "Page Base Juridique - En développement"
-                    font.pixelSize: 16
-                    color: "#888888"
-                }
+    function navigateToMenu() {
+        // Naviguer vers menu dans l'onglet actif
+        if (window.openTabs.length > 0 && window.activeTabIndex >= 0) {
+            var newTabs = window.openTabs.slice()
+            newTabs[window.activeTabIndex] = {
+                name: "Menu Principal",
+                icon: "🏠",
+                type: "menu",
+                source: ""
             }
+            window.openTabs = newTabs
+            updateCurrentAddress()
+            window.tabsChanged()
+        } else {
+            // Pas d'onglet, en créer un
+            openMenuTab()
         }
     }
     
-    // Loading Screen
-    Rectangle {
-        id: loadingScreen
-        anchors.fill: parent
-        color: "#1e1e1e"
-        visible: false
-        z: 999
+    function navigateToInterface(interfaceType, interfaceName) {
+        // Naviguer vers interface dans l'onglet actif
+        var sourceFile = interfaceType === "avocat" ? "AvocatInterface.qml" : 
+                        interfaceType === "syndic" ? "SyndicInterface.qml" :
+                        interfaceType === "expert_tech" ? "ExpertTechInterface.qml" :
+                        interfaceType === "expert_sante" ? "ExpertSanteInterface.qml" :
+                        interfaceType === "charge_affaires" ? "ChargeAffairesInterface.qml" :
+                        interfaceType === "architecte" ? "ArchitecteInterface.qml" :
+                        interfaceType === "stockage_cloud" ? "StockageCloudInterface.qml" :
+                        "CommunicationInterface.qml"
         
-        property int progress: 0
-        property string message: ""
+        var icon = interfaceType === "avocat" ? "⚖️" :
+                  interfaceType === "syndic" ? "🏢" :
+                  interfaceType === "expert_tech" ? "🔧" :
+                  interfaceType === "expert_sante" ? "🏥" :
+                  interfaceType === "charge_affaires" ? "💼" :
+                  interfaceType === "architecte" ? "🏛️" :
+                  interfaceType === "stockage_cloud" ? "☁️" : "💬"
         
-        Rectangle {
-            anchors.centerIn: parent
-            width: 400
-            height: 300
-            radius: 20
-            color: "#2d2d2d"
-            border.color: "#3d3d3d"
-            border.width: 1
-            
-            Column {
-                anchors.centerIn: parent
-                spacing: 30
-                width: parent.width - 80
-                
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "🔐"
-                    font.pixelSize: 64
-                }
-                
-                Text {
-                    id: loadingText
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: loadingScreen.message
-                    color: "#ffffff"
-                    font.pixelSize: 16
-                    font.family: "Segoe UI"
-                }
-                
-                Rectangle {
-                    width: parent.width
-                    height: 8
-                    radius: 4
-                    color: "#3d3d3d"
-                    
-                    Rectangle {
-                        id: progressBar
-                        width: parent.width * (loadingScreen.progress / 100)
-                        height: parent.height
-                        radius: 4
-                        color: "#FFFFFF"
-                        
-                        Behavior on width {
-                            NumberAnimation {
-                                duration: 300
-                                easing.type: Easing.OutQuad
-                            }
-                        }
-                    }
-                }
-                
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: loadingScreen.progress + "%"
-                    color: "#888888"
-                    font.pixelSize: 14
-                    font.family: "Segoe UI"
-                }
+        if (!interfaceName) {
+            interfaceName = interfaceType === "avocat" ? "Avocats" :
+                           interfaceType === "syndic" ? "Syndic" :
+                           interfaceType === "expert_tech" ? "Expert Technique" :
+                           interfaceType === "expert_sante" ? "Expert Santé" :
+                           interfaceType === "charge_affaires" ? "Chargé d'affaires" :
+                           interfaceType === "architecte" ? "Architecte" :
+                           interfaceType === "stockage_cloud" ? "Stockage Cloud" : "Communication"
+        }
+        
+        if (window.openTabs.length > 0 && window.activeTabIndex >= 0) {
+            // Remplacer onglet actif
+            var newTabs = window.openTabs.slice()
+            newTabs[window.activeTabIndex] = {
+                name: interfaceName,
+                icon: icon,
+                type: interfaceType,
+                source: sourceFile
+            }
+            window.openTabs = newTabs
+            updateCurrentAddress()
+            window.tabsChanged()
+        } else {
+            // Pas d'onglet, en créer un
+            openInterfaceTab(interfaceType, interfaceName)
+        }
+    }
+    
+    function openMenuTab() {
+        var isFirstTab = window.openTabs.length === 0
+        var newTabs = window.openTabs.slice()
+        newTabs.push({ name: "Menu Principal", icon: "🏠", type: "menu", source: "" })
+        window.openTabs = newTabs
+        window.activeTabIndex = window.openTabs.length - 1
+        updateCurrentAddress()
+        window.tabsChanged()
+        if (isFirstTab) {
+            mainStack.replace(mainWorkspace)
+        }
+    }
+    
+    function openInterfaceTab(interfaceType, interfaceName) {
+        var sourceFile = interfaceType === "dashboard" ? "DashboardInterface.qml" :
+                        interfaceType === "avocat" ? "AvocatInterface.qml" : 
+                        interfaceType === "syndic" ? "SyndicInterface.qml" :
+                        interfaceType === "expert_tech" ? "ExpertTechInterface.qml" :
+                        interfaceType === "expert_sante" ? "ExpertSanteInterface.qml" :
+                        interfaceType === "charge_affaires" ? "ChargeAffairesInterface.qml" :
+                        interfaceType === "architecte" ? "ArchitecteInterface.qml" :
+                        interfaceType === "stockage_cloud" ? "StockageCloudInterface.qml" :
+                        interfaceType === "mails" ? "MailsInterface.qml" :
+                        interfaceType === "calendrier" ? "CalendrierInterface.qml" :
+                        interfaceType === "parametres" ? "ParametresInterface.qml" : ""
+        
+        var icon = interfaceType === "dashboard" ? "📊" :
+                  interfaceType === "avocat" ? "⚖️" :
+                  interfaceType === "syndic" ? "🏢" :
+                  interfaceType === "expert_tech" ? "🔧" :
+                  interfaceType === "expert_sante" ? "🏥" :
+                  interfaceType === "charge_affaires" ? "💼" :
+                  interfaceType === "architecte" ? "🏛️" :
+                  interfaceType === "stockage_cloud" ? "☁️" :
+                  interfaceType === "mails" ? "📧" :
+                  interfaceType === "calendrier" ? "📅" :
+                  interfaceType === "parametres" ? "⚙️" : ""
+        
+        if (!interfaceName) {
+            interfaceName = interfaceType === "dashboard" ? "Tableau de Bord" :
+                           interfaceType === "avocat" ? "Avocats" :
+                           interfaceType === "syndic" ? "Syndic" :
+                           interfaceType === "expert_tech" ? "Expert Technique" :
+                           interfaceType === "expert_sante" ? "Expert Santé" :
+                           interfaceType === "charge_affaires" ? "Chargé d'affaires" :
+                           interfaceType === "architecte" ? "Architecte" :
+                           interfaceType === "stockage_cloud" ? "Stockage Cloud" :
+                           interfaceType === "mails" ? "Mails" :
+                           interfaceType === "calendrier" ? "Calendrier" :
+                           interfaceType === "parametres" ? "Paramètres" : ""
+        }
+        
+        var newTabs = window.openTabs.slice()
+        newTabs.push({ name: interfaceName, icon: icon, type: interfaceType, source: sourceFile })
+        window.openTabs = newTabs
+        window.activeTabIndex = window.openTabs.length - 1
+        updateCurrentAddress()
+        window.tabsChanged()
+    }
+    
+    function closeTab(index) {
+        var newTabs = window.openTabs.slice()
+        newTabs.splice(index, 1)
+        window.openTabs = newTabs
+        if (window.openTabs.length === 0) {
+            openMenuTab()
+        } else if (window.activeTabIndex >= window.openTabs.length) {
+            window.activeTabIndex = window.openTabs.length - 1
+        } else if (window.activeTabIndex === index && index > 0) {
+            window.activeTabIndex = index - 1
+        }
+        updateCurrentAddress()
+        window.tabsChanged()
+    }
+    
+    // FONCTIONS FAVORIS
+    function saveFavoritesToVault() {
+        try {
+            app.saveFavorites(JSON.stringify(window.favoritePages))
+        } catch(e) {
+            console.log("Erreur sauvegarde favoris:", e)
+        }
+    }
+    
+    function loadFavoritesFromVault() {
+        try {
+            var favs = app.loadFavorites()
+            if (favs && favs !== "[]") {
+                window.favoritePages = JSON.parse(favs)
+            }
+        } catch(e) {
+            console.log("Erreur chargement favoris:", e)
+        }
+    }
+    
+    function isCurrentPageInFavorites() {
+        if (window.openTabs.length === 0 || window.activeTabIndex < 0) return false
+        var currentTab = window.openTabs[window.activeTabIndex]
+        
+        for (var i = 0; i < window.favoritePages.length; i++) {
+            var fav = window.favoritePages[i]
+            if (!fav.isFolder && fav.type === currentTab.type) {
+                return true
+            }
+        }
+        return false
+    }
+    
+    function toggleCurrentPageFavorite() {
+        if (window.openTabs.length === 0 || window.activeTabIndex < 0) return
+        
+        var currentTab = window.openTabs[window.activeTabIndex]
+        var newFavs = window.favoritePages.slice()
+        var found = false
+        
+        // Vérifier si déjà dans les favoris
+        for (var i = 0; i < newFavs.length; i++) {
+            if (!newFavs[i].isFolder && newFavs[i].type === currentTab.type) {
+                // Supprimer
+                newFavs.splice(i, 1)
+                found = true
+                break
             }
         }
         
-        Connections {
-            target: app
-            function onLoadingProgress(prog, msg) {
-                loadingScreen.progress = prog
-                loadingScreen.message = msg
-                
-                if (prog >= 100) {
-                    hideTimer.start()
-                }
-            }
+        // Si pas trouvé, ajouter
+        if (!found) {
+            newFavs.push({
+                name: currentTab.name,
+                icon: currentTab.icon,
+                type: currentTab.type,
+                isFolder: false
+            })
         }
         
-        Timer {
-            id: hideTimer
-            interval: 500
-            onTriggered: {
-                loadingScreen.visible = false
-                loadingScreen.progress = 0
-                loadingScreen.message = ""
-            }
-        }
-        
-        function show() {
-            loadingScreen.visible = true
-            loadingScreen.progress = 0
-            loadingScreen.message = "Initialisation..."
-        }
+        window.favoritePages = newFavs
+        window.saveFavoritesToVault()
     }
 }
